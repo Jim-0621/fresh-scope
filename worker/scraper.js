@@ -94,27 +94,44 @@ function effectiveTime(body) {
   return `${year}-${month}-${day}T${String(hour === 24 ? 0 : hour).padStart(2, "0")}:00:00+08:00`;
 }
 
-async function fetchText(url, { timeoutMs = 12000, maxAttempts = 2 } = {}) {
-  let lastError;
-  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    try {
-      const response = await fetch(url, {
-        headers: {
-          accept: "*/*",
-          "user-agent": "FreshScope/1.0 (+personal price tracker)",
-          referer: LIST_PAGE_URL,
-          "x-requested-with": "XMLHttpRequest",
-        },
-        signal: AbortSignal.timeout(timeoutMs),
-      });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      return await response.text();
-    } catch (error) {
-      lastError = error;
-      if (attempt + 1 < maxAttempts) await new Promise((resolve) => setTimeout(resolve, 300));
-    }
+function jinaUrl(url) {
+  const target = new URL(url);
+  const query = target.search.slice(1);
+  target.search = "";
+  return `https://r.jina.ai/${target.href}${query ? `%3F${encodeURIComponent(query)}` : ""}`;
+}
+
+async function requestText(url, timeoutMs) {
+  const response = await fetch(url, {
+    headers: {
+      accept: "*/*",
+      "user-agent": "FreshScope/1.0 (+personal price tracker)",
+      referer: LIST_PAGE_URL,
+      "x-requested-with": "XMLHttpRequest",
+    },
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  return response.text();
+}
+
+async function fetchText(url, { timeoutMs = 4000, proxyTimeoutMs = 20000 } = {}) {
+  let directError;
+  try {
+    return await requestText(url, timeoutMs);
+  } catch (error) {
+    directError = error;
   }
-  throw new Error(`读取官网页面失败（${new URL(url).pathname}）：${lastError?.message || lastError}`);
+
+  try {
+    const wrapped = await requestText(jinaUrl(url), proxyTimeoutMs);
+    const marker = "\nMarkdown Content:\n";
+    const contentStart = wrapped.indexOf(marker);
+    if (contentStart < 0) throw new Error("备用读取未返回公告正文");
+    return wrapped.slice(contentStart + marker.length);
+  } catch (proxyError) {
+    throw new Error(`读取官网页面失败（${new URL(url).pathname}）：直连 ${directError?.message || directError}；备用读取 ${proxyError?.message || proxyError}`);
+  }
 }
 
 export async function collectOfficialPrices(knownSourceKeys = new Set()) {
@@ -131,7 +148,7 @@ export async function collectOfficialPrices(knownSourceKeys = new Set()) {
   })) {
     listingUrl.searchParams.set(key, value);
   }
-  const listingResponse = await fetchText(listingUrl.href, { timeoutMs: 25000, maxAttempts: 1 });
+  const listingResponse = await fetchText(listingUrl.href, { timeoutMs: 4000, proxyTimeoutMs: 20000 });
   let listingData;
   try {
     listingData = JSON.parse(listingResponse);
