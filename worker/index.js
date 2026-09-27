@@ -23,7 +23,9 @@ async function runCollection(db, triggerType) {
   const runId = run.meta.last_row_id;
 
   try {
-    const events = await collectOfficialPrices();
+    const knownEvents = await db.prepare("SELECT source_key FROM fuel_events").all();
+    const knownSourceKeys = new Set(knownEvents.results.map((event) => event.source_key));
+    const events = await collectOfficialPrices(knownSourceKeys);
     let insertedCount = 0;
     for (const event of events) {
       const result = await db

@@ -2,7 +2,6 @@ const LIST_PAGE_URL = "https://fzggw.zj.gov.cn/col/col1632199/cpyjg/index.html";
 const LIST_URL = "https://fzggw.zj.gov.cn/api-gateway/jpaas-publish-server/front/page/build/unit";
 const EXTRA_URLS = [
   "https://fzggw.zj.gov.cn/col/col1229629046/art/2026/art_6008c994616a47b8b6366e28cf329b7d.html",
-  "https://fzggw.zj.gov.cn/art/2025/12/22/art_1229629046_5720443.html",
 ];
 
 function decodeHtml(value) {
@@ -116,7 +115,7 @@ async function fetchText(url) {
   throw new Error(`读取官网页面失败（${new URL(url).pathname}）：${lastError?.message || lastError}`);
 }
 
-export async function collectOfficialPrices() {
+export async function collectOfficialPrices(knownSourceKeys = new Set()) {
   const listingUrl = new URL(LIST_URL);
   for (const [key, value] of Object.entries({
     parseType: "bulidstatic",
@@ -126,7 +125,7 @@ export async function collectOfficialPrices() {
     tagId: "信息列表",
     editType: "null",
     pageId: "WjmRjo8myrcFv0ZgeuKKh",
-    paramJson: JSON.stringify({ pageNo: 1, pageSize: 100 }),
+    paramJson: JSON.stringify({ pageNo: 1, pageSize: 30 }),
   })) {
     listingUrl.searchParams.set(key, value);
   }
@@ -145,7 +144,8 @@ export async function collectOfficialPrices() {
   if (links.length === 0) throw new Error("未能从官方油价栏目找到 2026 年公告链接，可能是页面结构发生变化。");
 
   const events = [];
-  const pages = [...uniqueLinks.values()];
+  const pages = [...uniqueLinks.values()].filter(({ url }) => !knownSourceKeys.has(url));
+  if (pages.length === 0) return [];
   for (let offset = 0; offset < pages.length; offset += 4) {
     const batch = await Promise.all(pages.slice(offset, offset + 4).map(async ({ url, title }) => {
       const html = await fetchText(url);
