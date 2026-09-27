@@ -1,4 +1,5 @@
-const LIST_URL = "https://fzggw.zj.gov.cn/col/col1632199/cpyjg/index.html";
+const LIST_PAGE_URL = "https://fzggw.zj.gov.cn/col/col1632199/cpyjg/index.html";
+const LIST_URL = "https://fzggw.zj.gov.cn/api-gateway/jpaas-publish-server/front/page/build/unit";
 const EXTRA_URLS = [
   "https://fzggw.zj.gov.cn/col/col1229629046/art/2026/art_6008c994616a47b8b6366e28cf329b7d.html",
   "https://fzggw.zj.gov.cn/art/2025/12/22/art_1229629046_5720443.html",
@@ -30,7 +31,7 @@ function collectLinks(html) {
     if (!/\.html?(?:[?#]|$)/i.test(href)) continue;
     let resolved;
     try {
-      resolved = new URL(href, LIST_URL);
+      resolved = new URL(href, LIST_PAGE_URL);
     } catch {
       continue;
     }
@@ -40,23 +41,6 @@ function collectLinks(html) {
     }
   }
   return links;
-}
-
-function collectListingPages(html) {
-  const pages = [];
-  const directory = new URL(".", LIST_URL).pathname;
-  for (const match of html.matchAll(/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)) {
-    const href = decodeHtml(match[1]).replace(/\\/g, "/");
-    let resolved;
-    try {
-      resolved = new URL(href, LIST_URL);
-    } catch {
-      continue;
-    }
-    if (resolved.hostname !== "fzggw.zj.gov.cn" || !resolved.pathname.startsWith(directory)) continue;
-    if (/\/index(?:_\d+)?\.html?$/i.test(resolved.pathname) && resolved.pathname !== new URL(LIST_URL).pathname) pages.push(resolved.href);
-  }
-  return pages;
 }
 
 function eventDate(title, url, body) {
@@ -93,8 +77,8 @@ function parsePrices(body) {
     "(?:89\\s*号(?:汽油)?|89#)",
     "(?:92\\s*号(?:汽油)?|92#)",
     "(?:95\\s*号(?:汽油)?|95#)",
-    "(?:0\\s*号柴油|0#柴油)",
-    "(?:-10\\s*号柴油|零下10\\s*号柴油|-10#柴油)",
+    "(?:0\\s*号(?:柴油)?|0#柴油)",
+    "(?:-10\\s*号(?:柴油)?|零下10\\s*号(?:柴油)?|-10#柴油)",
   ];
   const value = (index) => priceAfterLabel(normalized, labels[index], labels.slice(index + 1));
   return { price89: value(0), price92: value(1), price95: value(2), price0: value(3), priceM10: value(4) };
@@ -112,23 +96,47 @@ function effectiveTime(body) {
 }
 
 async function fetchText(url) {
-  const response = await fetch(url, { headers: { "user-agent": "FreshScope/1.0 (+personal price tracker)" }, signal: AbortSignal.timeout(12000) });
-  if (!response.ok) throw new Error(`官网返回 HTTP ${response.status}`);
+  let response;
+  try {
+    response = await fetch(url, {
+      headers: {
+        "user-agent": "FreshScope/1.0 (+personal price tracker)",
+        referer: LIST_PAGE_URL,
+      },
+      signal: AbortSignal.timeout(12000),
+    });
+  } catch (error) {
+    throw new Error(`读取官网页面失败（${url}）：${error?.message || error}`);
+  }
+  if (!response.ok) throw new Error(`官网页面 ${url} 返回 HTTP ${response.status}`);
   return response.text();
 }
 
 export async function collectOfficialPrices() {
-  const links = [];
-  const listingPages = [LIST_URL];
-  const seenPages = new Set();
-  while (listingPages.length > 0 && seenPages.size < 12) {
-    const pageUrl = listingPages.shift();
-    if (seenPages.has(pageUrl)) continue;
-    seenPages.add(pageUrl);
-    const listing = await fetchText(pageUrl);
-    links.push(...collectLinks(listing));
-    for (const nextPage of collectListingPages(listing)) if (!seenPages.has(nextPage)) listingPages.push(nextPage);
+  const listingUrl = new URL(LIST_URL);
+  for (const [key, value] of Object.entries({
+    parseType: "bulidstatic",
+    webId: "3185",
+    tplSetId: "o0YcVHHq5vWtr3uiCp4SY",
+    pageType: "column",
+    tagId: "信息列表",
+    editType: "null",
+    pageId: "WjmRjo8myrcFv0ZgeuKKh",
+    paramJson: JSON.stringify({ pageNo: 1, pageSize: 100 }),
+  })) {
+    listingUrl.searchParams.set(key, value);
   }
+  const listingResponse = await fetchText(listingUrl.href);
+  let listingData;
+  try {
+    listingData = JSON.parse(listingResponse);
+  } catch {
+    throw new Error("官网油价列表接口返回了无法识别的数据。");
+  }
+  if (!listingData.success || typeof listingData.data?.html !== "string") {
+    throw new Error("官网油价列表接口未返回公告列表。");
+  }
+  const links = collectLinks(listingData.data.html);
   const uniqueLinks = new Map([...links, ...EXTRA_URLS.map((url) => ({ url, title: "浙江省成品油价格公告" }))].map((item) => [item.url, item]));
   if (links.length === 0) throw new Error("未能从官方油价栏目找到 2026 年公告链接，可能是页面结构发生变化。");
 
