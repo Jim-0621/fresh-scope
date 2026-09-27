@@ -137,7 +137,11 @@ async function updatePrices(token: string) {
     const result = await response.json();
     if (!response.ok) throw new Error(result.message || result.error || "更新失败。");
     if (result.status === "success") localStorage.setItem(tokenStorageKey, token);
-    notice = result.status === "success" ? `更新成功，发现 ${result.discoveredCount} 条公告，新增 ${result.insertedCount} 条记录。` : result.message;
+    notice = result.status === "success"
+      ? result.discoveredCount === 0
+        ? "更新成功，暂无新公告。"
+        : `更新成功，发现 ${result.discoveredCount} 条新公告，新增 ${result.insertedCount} 条记录。`
+      : result.message;
     if (result.status === "success") await loadData();
   } catch (error) {
     if (error instanceof Error && /凭证无效/.test(error.message)) localStorage.removeItem(tokenStorageKey);
