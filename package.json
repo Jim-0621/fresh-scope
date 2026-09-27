@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "deploy": "npm run build && wrangler deploy",
-    "deploy:pages": "npm run build && wrangler pages deploy dist --config wrangler.pages.jsonc --project-name fresh-scope",
+    "deploy:pages": "npm run build && wrangler pages deploy ../dist --cwd pages --project-name fresh-scope",
     "db:migrate:local": "wrangler d1 migrations apply fresh-scope-db --local",
     "db:migrate:remote": "wrangler d1 migrations apply fresh-scope-db --remote"
   },
