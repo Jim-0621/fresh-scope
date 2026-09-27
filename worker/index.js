@@ -57,11 +57,14 @@ async function runCollection(db, triggerType) {
     return { status: "success", discoveredCount: events.length, insertedCount };
   } catch (error) {
     const summary = String(error?.message || error).slice(0, 300);
+    const message = /timeout/i.test(summary)
+      ? "浙江发改委官网暂未响应，现有油价数据已保留，请稍后重试。"
+      : "官方公告读取或校验失败，现有油价数据已保留。";
     await db
       .prepare("UPDATE collection_runs SET finished_at = ?, status = 'failed', error_summary = ? WHERE id = ?")
       .bind(new Date().toISOString(), summary, runId)
       .run();
-    return { status: "failed", message: "官方公告读取或校验失败，已有价格保持不变。", error: summary };
+    return { status: "failed", message, error: summary };
   } finally {
     await db.prepare("UPDATE collector_lock SET locked_until = 0 WHERE id = 1").run();
   }

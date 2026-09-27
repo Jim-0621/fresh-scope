@@ -94,9 +94,9 @@ function effectiveTime(body) {
   return `${year}-${month}-${day}T${String(hour === 24 ? 0 : hour).padStart(2, "0")}:00:00+08:00`;
 }
 
-async function fetchText(url) {
+async function fetchText(url, { timeoutMs = 12000, maxAttempts = 2 } = {}) {
   let lastError;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     try {
       const response = await fetch(url, {
         headers: {
@@ -105,13 +105,13 @@ async function fetchText(url) {
           referer: LIST_PAGE_URL,
           "x-requested-with": "XMLHttpRequest",
         },
-        signal: AbortSignal.timeout(12000),
+        signal: AbortSignal.timeout(timeoutMs),
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       return await response.text();
     } catch (error) {
       lastError = error;
-      if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 300));
+      if (attempt + 1 < maxAttempts) await new Promise((resolve) => setTimeout(resolve, 300));
     }
   }
   throw new Error(`读取官网页面失败（${new URL(url).pathname}）：${lastError?.message || lastError}`);
@@ -131,7 +131,7 @@ export async function collectOfficialPrices(knownSourceKeys = new Set()) {
   })) {
     listingUrl.searchParams.set(key, value);
   }
-  const listingResponse = await fetchText(listingUrl.href);
+  const listingResponse = await fetchText(listingUrl.href, { timeoutMs: 25000, maxAttempts: 1 });
   let listingData;
   try {
     listingData = JSON.parse(listingResponse);
