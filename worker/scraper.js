@@ -100,8 +100,10 @@ async function fetchText(url) {
     try {
       const response = await fetch(url, {
         headers: {
+          accept: "*/*",
           "user-agent": "FreshScope/1.0 (+personal price tracker)",
           referer: LIST_PAGE_URL,
+          "x-requested-with": "XMLHttpRequest",
         },
         signal: AbortSignal.timeout(12000),
       });
