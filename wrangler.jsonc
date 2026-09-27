@@ -12,7 +12,7 @@
     {
       "binding": "DB",
       "database_name": "fresh-scope-db",
-      "database_id": "00000000-0000-0000-0000-000000000001",
+      "database_id": "96f2bbc5-6343-4fbb-be23-5bd6bd89690f",
       "migrations_dir": "migrations"
     }
   ],
