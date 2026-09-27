@@ -1,6 +1,6 @@
 # 知新 FreshScope
 
-追踪浙江省成品油价格公告的轻量网页应用。首期使用 Cloudflare Worker、Static Assets 和 D1；每日北京时间 08:00 采集，页面也提供带服务端凭证校验的手动更新。
+追踪浙江省成品油价格公告的轻量网页应用。网站使用 Cloudflare Pages，API 与每日北京时间 08:00 的采集任务由 Cloudflare Worker 和 D1 提供；页面也提供带服务端凭证校验的手动更新。
 
 ## 已有首发数据
 
@@ -45,6 +45,10 @@ npx wrangler deploy
 `UPDATE_TOKEN` 只在 Worker 服务端保存。手动更新页面第一次使用时会要求输入凭证；输入值保存在当前浏览器的本地存储中，不会写入前端构建产物。保护凭证应保持私密并使用足够随机的值。
 
 Cron `0 0 * * *` 使用 UTC，即每天北京时间 08:00。请到 Cloudflare Dashboard 确认部署后触发器已启用。未配置 `UPDATE_TOKEN` 时手动更新接口会拒绝服务；只读页面无需登录。
+
+## Cloudflare Pages
+
+网站发布到 https://fresh-scope.pages.dev。Pages Function 通过 Service Binding 将 /api/* 转发到 fresh-scope Worker，因此网页地址不依赖 Cloudflare 账号的 workers.dev 子域名；Worker 仍负责 D1 和每日定时采集。首次部署时先用 Wrangler 创建 fresh-scope Pages 项目，再运行 npm run deploy:pages。
 
 ## 数据处理
 

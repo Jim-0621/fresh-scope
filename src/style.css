@@ -76,3 +76,13 @@ footer { display: flex; align-items: center; gap: 18px; margin-top: 53px; min-he
 }
 .event-chip.upward { color: #b66c4c; }.event-chip.upward i { background: #ce875f; }.event-chip.downward { color: #4f8565; }.event-chip.downward i { background: #70a17b; }
 @media (prefers-reduced-motion: reduce) { *,*::before,*::after { scroll-behavior: auto!important; animation-duration: .01ms!important; transition-duration: .01ms!important; } }
+.chart-wrap { position: relative; }
+.chart-svg { touch-action: pan-y; }
+.chart-point { cursor: crosshair; }
+.chart-point:focus-visible { outline: none; stroke: #e88b61; stroke-width: 3; }
+.chart-hover-line { stroke: #9bb7a2; stroke-width: 1; stroke-dasharray: 3 4; pointer-events: none; vector-effect: non-scaling-stroke; }
+.chart-hover-point { fill: white; stroke: #e88b61; stroke-width: 2.5; pointer-events: none; vector-effect: non-scaling-stroke; }
+.chart-tooltip { position: absolute; z-index: 2; display: flex; flex-direction: column; gap: 4px; min-width: 102px; border: 1px solid #e6ece6; border-radius: 7px; padding: 7px 9px; color: #7b8980; background: white; box-shadow: 0 4px 14px #20362d16; font-size: 9px; pointer-events: none; }
+.chart-tooltip[hidden] { display: none; }
+.chart-tooltip strong { color: #315c44; font-family: "DM Mono",monospace; font-size: 13px; font-weight: 500; font-variant-numeric: tabular-nums; }
+@media (max-width: 760px) { .chart-tooltip { min-width: 92px; padding: 6px 8px; } }

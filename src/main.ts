@@ -17,7 +17,7 @@ type FuelData = { events: Event[]; lastSuccessAt: string | null; latestRun: { st
 
 const root = document.querySelector<HTMLDivElement>("#app")!;
 const tokenStorageKey = "fresh-scope-update-token";
-let selectedFuel: "price_92" | "price_95" | "price_0" = "price_92";
+let selectedFuel: "price_92" | "price_95" | "price_0" = "price_95";
 let fuelData: FuelData = { events: [], lastSuccessAt: null, latestRun: null };
 let isUpdating = false;
 let notice = "";
@@ -68,6 +68,103 @@ function renderTrend() {
   return `<svg class="chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="${fuelNames[selectedFuel]}历史价格趋势" preserveAspectRatio="none"><defs><linearGradient id="chart-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#94b9a4" stop-opacity=".28"/><stop offset="100%" stop-color="#94b9a4" stop-opacity="0"/></linearGradient></defs>${grid}<polygon points="${area}" fill="url(#chart-fill)"/><polyline points="${coordinates.join(" ")}" class="chart-line"/>${points}${dates}</svg>`;
 }
 
+function bindChartInteractions() {
+  const svg = root.querySelector<SVGSVGElement>(".chart-svg");
+  const chartWrap = root.querySelector<HTMLElement>(".chart-wrap");
+  if (!svg || !chartWrap) return;
+
+  const events = [...fuelData.events].filter((event) => event[selectedFuel] != null).reverse();
+  const points = [...svg.querySelectorAll<SVGCircleElement>(".chart-point")];
+  const tooltip = document.createElement("div");
+  const dateLabel = document.createElement("span");
+  const priceLabel = document.createElement("strong");
+  const priceValue = document.createElement("span");
+  tooltip.className = "chart-tooltip";
+  tooltip.setAttribute("role", "status");
+  tooltip.setAttribute("aria-live", "polite");
+  tooltip.hidden = true;
+  priceLabel.textContent = "¥ ";
+  priceLabel.append(priceValue);
+  tooltip.append(dateLabel, priceLabel);
+  chartWrap.append(tooltip);
+
+  const hoverLine = document.createElementNS("http://www.w3.org/2000/svg", "line");
+  hoverLine.setAttribute("class", "chart-hover-line");
+  hoverLine.setAttribute("y1", "24");
+  hoverLine.setAttribute("y2", "200");
+  hoverLine.style.opacity = "0";
+  svg.insertBefore(hoverLine, points[0] ?? null);
+  const hoverPoint = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+  hoverPoint.setAttribute("class", "chart-hover-point");
+  hoverPoint.setAttribute("r", "6");
+  hoverPoint.style.opacity = "0";
+  svg.append(hoverPoint);
+  let pinnedIndex: number | null = null;
+
+  const showPoint = (index: number) => {
+    const event = events[index];
+    const point = points[index];
+    if (!event || !point) return;
+    const x = Number(point.getAttribute("cx"));
+    const y = Number(point.getAttribute("cy"));
+    hoverLine.setAttribute("x1", String(x));
+    hoverLine.setAttribute("x2", String(x));
+    hoverLine.style.opacity = "1";
+    hoverPoint.setAttribute("cx", String(x));
+    hoverPoint.setAttribute("cy", String(y));
+    hoverPoint.style.opacity = "1";
+    dateLabel.textContent = event.announced_on;
+    priceValue.textContent = formatPrice(event[selectedFuel]);
+    tooltip.hidden = false;
+
+    const wrapBounds = chartWrap.getBoundingClientRect();
+    const svgBounds = svg.getBoundingClientRect();
+    const pointX = (x / 780) * svgBounds.width;
+    const pointY = (y / 236) * svgBounds.height;
+    const halfWidth = tooltip.offsetWidth / 2;
+    const left = Math.max(halfWidth + 4, Math.min(wrapBounds.width - halfWidth - 4, pointX));
+    const top = pointY < tooltip.offsetHeight + 12 ? pointY + 12 : pointY - tooltip.offsetHeight - 10;
+    tooltip.style.left = left + "px";
+    tooltip.style.top = Math.max(3, top) + "px";
+    tooltip.setAttribute("aria-label", event.announced_on + "，" + fuelNames[selectedFuel] + " " + formatPrice(event[selectedFuel]) + " 元每升");
+  };
+
+  const hidePoint = () => {
+    if (pinnedIndex !== null) return;
+    tooltip.hidden = true;
+    hoverLine.style.opacity = "0";
+    hoverPoint.style.opacity = "0";
+  };
+
+  const nearestPoint = (clientX: number) => {
+    const bounds = svg.getBoundingClientRect();
+    const viewX = ((clientX - bounds.left) / bounds.width) * 780;
+    const plotStart = 42;
+    const plotWidth = 780 - plotStart - 18;
+    if (viewX < plotStart - 12 || viewX > plotStart + plotWidth + 12) return null;
+    return Math.max(0, Math.min(events.length - 1, Math.round(((viewX - plotStart) / plotWidth) * (events.length - 1))));
+  };
+
+  points.forEach((point, index) => {
+    point.setAttribute("tabindex", "0");
+    point.setAttribute("aria-label", events[index].announced_on + "，" + fuelNames[selectedFuel] + " " + formatPrice(events[index][selectedFuel]) + " 元每升");
+    point.addEventListener("focus", () => showPoint(index));
+    point.addEventListener("blur", hidePoint);
+  });
+  svg.addEventListener("pointermove", (event) => {
+    const index = nearestPoint(event.clientX);
+    if (index !== null) showPoint(index);
+  });
+  svg.addEventListener("pointerleave", hidePoint);
+  svg.addEventListener("click", (event) => {
+    const index = nearestPoint(event.clientX);
+    if (index === null) return;
+    pinnedIndex = pinnedIndex === index ? null : index;
+    if (pinnedIndex === null) hidePoint();
+    else showPoint(index);
+  });
+}
+
 function render() {
   const activeEvents = fuelData.events.filter((event) => !event.is_no_change);
   const latestEvent = activeEvents[0];
@@ -103,6 +200,7 @@ function render() {
     </div>
     <dialog class="token-dialog" id="token-dialog"><form method="dialog" id="token-form"><button class="dialog-close" value="cancel" aria-label="关闭">×</button><span class="section-kicker">PRIVATE ACTION</span><h2>验证后更新</h2><p>立即更新会重新读取官方公告。请输入仅保存在您浏览器中的更新凭证。</p><label for="update-token">更新凭证</label><input id="update-token" type="password" autocomplete="current-password" placeholder="输入 Cloudflare 更新凭证" required/><div class="dialog-actions"><button class="cancel-button" value="cancel">取消</button><button class="confirm-button" value="confirm" id="confirm-update">验证并更新 <span>↗</span></button></div></form></dialog>`;
 
+  bindChartInteractions();
   root.querySelector<HTMLButtonElement>("#update-button")?.addEventListener("click", beginUpdate);
   root.querySelectorAll<HTMLButtonElement>(".fuel-tab").forEach((button) => button.addEventListener("click", () => {
     selectedFuel = button.dataset.fuel as typeof selectedFuel;
@@ -138,9 +236,9 @@ async function updatePrices(token: string) {
     if (!response.ok) throw new Error(result.message || result.error || "更新失败。");
     if (result.status === "success") localStorage.setItem(tokenStorageKey, token);
     notice = result.status === "success"
-      ? result.discoveredCount === 0
+      ? result.discoveredCount === 0 && result.updatedCount === 0
         ? "更新成功，暂无新公告。"
-        : `更新成功，发现 ${result.discoveredCount} 条新公告，新增 ${result.insertedCount} 条记录。`
+        : "更新成功，发现 " + result.discoveredCount + " 条新公告，补全 " + result.updatedCount + " 条记录，新增 " + result.insertedCount + " 条记录。"
       : result.message;
     if (result.status === "success") await loadData();
   } catch (error) {

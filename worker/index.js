@@ -23,11 +23,35 @@ async function runCollection(db, triggerType) {
   const runId = run.meta.last_row_id;
 
   try {
-    const knownEvents = await db.prepare("SELECT source_key FROM fuel_events").all();
-    const knownSourceKeys = new Set(knownEvents.results.map((event) => event.source_key));
-    const events = await collectOfficialPrices(knownSourceKeys);
+    const knownEvents = await db.prepare("SELECT * FROM fuel_events").all();
+    const knownBySourceKey = new Map(knownEvents.results.map((event) => [event.source_key, event]));
+    const completeSourceKeys = new Set(
+      knownEvents.results
+        .filter((event) => event.effective_at && (event.is_no_change || (event.price_92 != null && event.price_95 != null && event.price_0 != null)))
+        .map((event) => event.source_key),
+    );
+    const events = await collectOfficialPrices(completeSourceKeys);
     let insertedCount = 0;
+    let updatedCount = 0;
     for (const event of events) {
+      if (knownBySourceKey.has(event.sourceKey)) {
+        const result = await db
+          .prepare(
+            `UPDATE fuel_events SET
+               effective_at = COALESCE(effective_at, ?),
+               price_89 = COALESCE(price_89, ?),
+               price_92 = COALESCE(price_92, ?),
+               price_95 = COALESCE(price_95, ?),
+               price_0 = COALESCE(price_0, ?),
+               price_m10 = COALESCE(price_m10, ?)
+             WHERE source_key = ? AND (effective_at IS NULL OR price_92 IS NULL OR price_95 IS NULL OR price_0 IS NULL)`,
+          )
+          .bind(event.effectiveAt, event.price89, event.price92, event.price95, event.price0, event.priceM10, event.sourceKey)
+          .run();
+        updatedCount += result.meta.changes;
+        continue;
+      }
+
       const result = await db
         .prepare(
           `INSERT OR IGNORE INTO fuel_events
@@ -54,7 +78,8 @@ async function runCollection(db, triggerType) {
       .prepare("UPDATE collection_runs SET finished_at = ?, status = 'success', discovered_count = ?, inserted_count = ? WHERE id = ?")
       .bind(new Date().toISOString(), events.length, insertedCount, runId)
       .run();
-    return { status: "success", discoveredCount: events.length, insertedCount };
+    const discoveredCount = events.filter((event) => !knownBySourceKey.has(event.sourceKey)).length;
+    return { status: "success", discoveredCount, insertedCount, updatedCount };
   } catch (error) {
     const summary = String(error?.message || error).slice(0, 300);
     const message = /timeout/i.test(summary)
