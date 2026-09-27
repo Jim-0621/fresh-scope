@@ -96,20 +96,24 @@ function effectiveTime(body) {
 }
 
 async function fetchText(url) {
-  let response;
-  try {
-    response = await fetch(url, {
-      headers: {
-        "user-agent": "FreshScope/1.0 (+personal price tracker)",
-        referer: LIST_PAGE_URL,
-      },
-      signal: AbortSignal.timeout(12000),
-    });
-  } catch (error) {
-    throw new Error(`读取官网页面失败（${url}）：${error?.message || error}`);
+  let lastError;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const response = await fetch(url, {
+        headers: {
+          "user-agent": "FreshScope/1.0 (+personal price tracker)",
+          referer: LIST_PAGE_URL,
+        },
+        signal: AbortSignal.timeout(12000),
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return await response.text();
+    } catch (error) {
+      lastError = error;
+      if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 300));
+    }
   }
-  if (!response.ok) throw new Error(`官网页面 ${url} 返回 HTTP ${response.status}`);
-  return response.text();
+  throw new Error(`读取官网页面失败（${new URL(url).pathname}）：${lastError?.message || lastError}`);
 }
 
 export async function collectOfficialPrices() {
