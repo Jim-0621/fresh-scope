@@ -25,6 +25,21 @@ const requestedTarget = process.argv[2];
 const targets = requestedTarget ? allTargets.filter((target) => target.id === requestedTarget) : allTargets;
 if (requestedTarget && targets.length === 0) throw new Error(`Unknown target: ${requestedTarget}`);
 
+function describeError(error, depth = 0) {
+  if (!error) return "unknown error";
+  const name = error.name ?? "Error";
+  const code = error.code ? ` code=${error.code}` : "";
+  const message = String(error.message ?? error).replace(/\s+/g, " ").slice(0, 220);
+  const nested = [];
+  if (depth < 2 && error.cause && error.cause !== error) {
+    nested.push(`cause=[${describeError(error.cause, depth + 1)}]`);
+  }
+  if (depth < 2 && Array.isArray(error.errors)) {
+    nested.push(`errors=[${error.errors.slice(0, 3).map((item) => describeError(item, depth + 1)).join(" | ")}]`);
+  }
+  return `${name}${code}: ${message}${nested.length ? ` ${nested.join(" ")}` : ""}`.slice(0, 700);
+}
+
 const outcomes = [];
 for (const target of targets) {
   const started = Date.now();
@@ -59,7 +74,8 @@ for (const target of targets) {
     console.log(`${target.name}: http=${response.status} elapsed_ms=${Date.now() - started} ${details}`);
   } catch (error) {
     outcomes.push({ group: target.group, name: target.name, reachable: false });
-    console.log(`${target.name}: request_error=${error?.name ?? "Error"} elapsed_ms=${Date.now() - started} message=${String(error?.message ?? error).slice(0, 180)}`);
+    const cause = error?.cause ? describeError(error.cause) : "unavailable";
+    console.log(`${target.name}: request_error=${error?.name ?? "Error"} elapsed_ms=${Date.now() - started} message=${String(error?.message ?? error).replace(/\s+/g, " ").slice(0, 180)} cause=${cause}`);
   }
 }
 
