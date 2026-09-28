@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" aria-label="FreshScope">
+  <rect width="64" height="64" rx="16" fill="#39755a"/>
+  <rect x="15" y="34" width="8" height="16" rx="3" fill="#e7f2e9"/>
+  <rect x="28" y="21" width="8" height="29" rx="3" fill="#e7f2e9"/>
+  <rect x="41" y="27" width="8" height="23" rx="3" fill="#e7f2e9"/>
+</svg>

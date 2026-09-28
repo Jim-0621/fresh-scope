@@ -134,6 +134,14 @@ h2 { font-size: 23px; }
 .change-pill { padding: 6px 9px; font-size: 12px; }
 .price-footnote { font-size: 12px; }
 .fuel-tab { min-height: 42px; padding: 10px 16px; font-size: 14px; }
+.year-bar { display: flex; align-items: center; gap: 14px; margin-top: 18px; color: #64736a; font-size: 13px; }
+.year-tabs { display: inline-flex; gap: 4px; padding: 4px; border: 1px solid #e4ebe4; border-radius: 9px; background: #edf2ed; }
+.year-tab { appearance: none; min-height: 40px; padding: 0 14px; border: 0; border-radius: 6px; background: transparent; color: #6f8073; font-size: 13px; cursor: pointer; }
+.year-tab:hover { color: #315c44; }
+.year-tab.selected { color: #285b40; background: #fff; box-shadow: 0 1px 5px #24392d14; font-weight: 600; }
+.year-tab:focus-visible { outline: 3px solid #a8cbb2; outline-offset: 2px; }
+.year-bar + .trend-card { margin-top: 14px; }
+.history-controls { display: flex; align-items: center; gap: 20px; }
 .trend-current-label,.period-label,.trend-period { font-size: 13px; }
 .trend-current-price { font-size: 29px; }
 .trend-current-price span { font-size: 13px; }
@@ -167,6 +175,8 @@ footer { font-size: 12px; }
   .fuel-label { font-size: 14px; }
   .price-number { font-size: 34px; }
   .fuel-tab { padding: 9px 10px; font-size: 12px; }
+  .history-heading { flex-wrap: wrap; }
+  .history-controls { width: 100%; justify-content: space-between; gap: 10px; }
   .history-year-heading h3 { font-size: 19px; }
   .table-foot { flex-wrap: wrap; gap: 5px 14px; }
 }
@@ -188,4 +198,6 @@ footer { font-size: 12px; }
   .trend-current-price { font-size: 25px; }
   .trend-period { font-size: 11px; }
   .chart-legend { flex-wrap: wrap; gap: 4px 10px; }
+  .year-bar { justify-content: space-between; gap: 8px; }
+  .year-tab { min-height: 38px; padding: 0 10px; font-size: 12px; }
 }
