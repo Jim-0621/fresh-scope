@@ -55,6 +55,11 @@ function renderTrend() {
   const { width, height, pad } = chartLayout();
   if (events.length === 0) return `<div class="chart-empty"><span class="chart-empty-icon">↗</span><p>${selectedYear} 年暂无可绘制的价格</p></div>`;
   const values = events.map((event) => Number(event[selectedFuel]));
+  const highest = Math.max(...values);
+  const lowest = Math.min(...values);
+  const average = values.reduce((sum, value) => sum + value, 0) / values.length;
+  const highestIndex = values.indexOf(highest);
+  const lowestIndex = values.indexOf(lowest);
   const min = Math.floor((Math.min(...values) - 0.1) * 2) / 2;
   const max = Math.ceil((Math.max(...values) + 0.1) * 2) / 2;
   const range = Math.max(max - min, 0.5);
@@ -70,12 +75,22 @@ function renderTrend() {
     const yy = y(value);
     return `<line x1="${pad.left}" y1="${yy}" x2="${plotRight}" y2="${yy}" class="grid-line"/><text x="${pad.left - 12}" y="${yy + 4}" text-anchor="end" class="axis-label">${value.toFixed(1)}</text>`;
   }).join("");
+  const guideLine = (kind: "high" | "average" | "low", value: number) =>
+    `<line x1="${pad.left}" y1="${y(value)}" x2="${plotRight}" y2="${y(value)}" class="chart-guide-line chart-guide-${kind}"/>`;
+  const guides = `${guideLine("high", highest)}${guideLine("average", average)}${guideLine("low", lowest)}`;
   const labelCount = Math.min(events.length, width <= 420 ? 3 : 5);
   const labelIndices = Array.from({ length: labelCount }, (_, index) => labelCount === 1 ? 0 : Math.round((index * (events.length - 1)) / (labelCount - 1)));
   const dates = labelIndices.map((index, labelIndex) => `<text x="${points[index].x}" y="${height - 10}" text-anchor="${labelIndex === 0 ? "start" : labelIndex === labelCount - 1 ? "end" : "middle"}" class="axis-label">${formatShortDate(events[index].announced_on)}</text>`).join("");
-  const markers = points.map((point, index) => `<circle cx="${point.x}" cy="${point.y}" r="${index === points.length - 1 ? 5 : 3.5}" class="chart-point ${index === points.length - 1 ? "chart-point-latest" : ""}"><title>${point.event.announced_on} · ¥${formatPrice(point.event[selectedFuel])}</title></circle>`).join("");
-  const latest = points[points.length - 1];
-  return `<svg class="chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="${selectedYear} 年${fuelNames[selectedFuel]}价格趋势" preserveAspectRatio="none"><defs><linearGradient id="chart-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#6f9a7b" stop-opacity=".25"/><stop offset="100%" stop-color="#6f9a7b" stop-opacity=".015"/></linearGradient></defs>${grid}<path d="${areaPath}" class="chart-area"/><line x1="${pad.left}" y1="${latest.y}" x2="${plotRight}" y2="${latest.y}" class="chart-latest-line"/><path d="${linePath}" class="chart-line"/>${markers}<text x="${width - 5}" y="${latest.y + 4}" text-anchor="end" class="chart-latest-label">¥ ${formatPrice(latest.event[selectedFuel])}</text>${dates}</svg>`;
+  const markers = points.map((point, index) => {
+    const isLatest = index === points.length - 1;
+    const isHighest = index === highestIndex;
+    const isLowest = index === lowestIndex;
+    const classes = ["chart-point", isLatest && "chart-point-latest", isHighest && "chart-point-high", isLowest && "chart-point-low"].filter(Boolean).join(" ");
+    const tags = [isHighest && "最高价", isLowest && "最低价"].filter(Boolean).join("、");
+    return `<circle cx="${point.x}" cy="${point.y}" r="${isHighest || isLowest ? 5.5 : isLatest ? 5 : 3.5}" class="${classes}"><title>${point.event.announced_on} · ¥${formatPrice(point.event[selectedFuel])}${tags ? ` · ${tags}` : ""}</title></circle>`;
+  }).join("");
+  const legend = `<div class="chart-benchmarks" aria-label="${selectedYear} 年价格参考：最高价 ¥${formatPrice(highest)}，公告均价 ¥${formatPrice(average)}，最低价 ¥${formatPrice(lowest)}"><span class="benchmark-stat benchmark-high"><i></i><span>最高</span><strong>¥ ${formatPrice(highest)}</strong></span><span class="benchmark-stat benchmark-average"><i></i><span>均价</span><strong>¥ ${formatPrice(average)}</strong></span><span class="benchmark-stat benchmark-low"><i></i><span>最低</span><strong>¥ ${formatPrice(lowest)}</strong></span></div>`;
+  return `<svg class="chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="${selectedYear} 年${fuelNames[selectedFuel]}价格趋势，最高价 ¥${formatPrice(highest)}，最低价 ¥${formatPrice(lowest)}，公告均价 ¥${formatPrice(average)}" preserveAspectRatio="none"><defs><linearGradient id="chart-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#6f9a7b" stop-opacity=".25"/><stop offset="100%" stop-color="#6f9a7b" stop-opacity=".015"/></linearGradient></defs>${grid}<path d="${areaPath}" class="chart-area"/>${guides}<path d="${linePath}" class="chart-line"/>${markers}${dates}</svg>${legend}`;
 }
 
 function bindChartInteractions() {
