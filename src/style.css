@@ -86,3 +86,29 @@ footer { display: flex; align-items: center; gap: 18px; margin-top: 53px; min-he
 .chart-tooltip[hidden] { display: none; }
 .chart-tooltip strong { color: #315c44; font-family: "DM Mono",monospace; font-size: 13px; font-weight: 500; font-variant-numeric: tabular-nums; }
 @media (max-width: 760px) { .chart-tooltip { min-width: 92px; padding: 6px 8px; } }
+.chart-wrap { min-height: 300px; margin-top: 25px; }
+.chart-svg { height: 300px; overflow: hidden; }
+.chart-empty { min-height: 300px; }
+.axis-label { fill: #98a59b; font-size: 10px; }
+.grid-line { stroke: #edf1ec; stroke-dasharray: 3 5; }
+.chart-area { fill: url(#chart-fill); }
+.chart-line { stroke: #4f8060; stroke-width: 2.8; }
+.chart-point { fill: #fff; stroke: #5d8d6c; stroke-width: 2; transition: r .16s ease, fill .16s ease; }
+.chart-point-latest { fill: #e88b61; stroke: #fff; stroke-width: 3; }
+.chart-latest-line { stroke: #9db6a2; stroke-width: 1; stroke-dasharray: 4 5; vector-effect: non-scaling-stroke; }
+.chart-latest-label { fill: #4f765b; font: 600 11px "DM Mono",monospace; }
+.chart-legend { padding-top: 10px; font-size: 10px; }
+.history-years { display: grid; gap: 18px; margin-top: 16px; }
+.history-year-heading { display: flex; align-items: center; justify-content: space-between; margin: 0 2px 9px; }
+.history-year-heading h3 { color: #35483d; font-family: "DM Mono","Noto Sans SC",monospace; font-size: 16px; font-weight: 600; letter-spacing: -.03em; }
+.history-year-heading span { border: 1px solid #e6ebe5; border-radius: 20px; padding: 5px 9px; color: #77867b; background: #f8faf7; font-size: 9px; }
+.history-year .history-card { margin-top: 0; }
+.history-year .table-foot { color: #829087; }
+.history-empty { display: flex; min-height: 145px; flex-direction: column; align-items: center; justify-content: center; gap: 7px; border: 1px dashed #dfe7df; border-radius: 10px; color: #65776b; background: #fbfcfa; font-size: 12px; }
+.history-empty small { color: #9aa49d; font-size: 10px; }
+@media (max-width: 760px) {
+  .chart-wrap,.chart-svg { min-height: 250px; height: 250px; }
+  .chart-empty { min-height: 250px; }
+  .history-year-heading h3 { font-size: 15px; }
+  .history-years { gap: 15px; }
+}

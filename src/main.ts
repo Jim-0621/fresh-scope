@@ -17,6 +17,7 @@ type FuelData = { events: Event[]; lastSuccessAt: string | null; latestRun: { st
 
 const root = document.querySelector<HTMLDivElement>("#app")!;
 const tokenStorageKey = "fresh-scope-update-token";
+const chartLayout = { width: 920, height: 300, pad: { top: 28, right: 82, bottom: 40, left: 58 } };
 let selectedFuel: "price_92" | "price_95" | "price_0" = "price_95";
 let fuelData: FuelData = { events: [], lastSuccessAt: null, latestRun: null };
 let isUpdating = false;
@@ -44,28 +45,31 @@ function changeFor(field: "price_92" | "price_95" | "price_0") {
 }
 
 function renderTrend() {
-  const events = [...fuelData.events].filter((event) => event[selectedFuel] != null).reverse();
-  const width = 780;
-  const height = 236;
-  const pad = { top: 24, right: 18, bottom: 36, left: 42 };
+  const events = [...fuelData.events].filter((event) => event.announced_on >= "2026-01-01" && event[selectedFuel] != null).reverse();
+  const { width, height, pad } = chartLayout;
   if (events.length === 0) return `<div class="chart-empty"><span class="chart-empty-icon">↗</span><p>官网历史数据采集后，价格曲线会显示在这里</p></div>`;
   const values = events.map((event) => Number(event[selectedFuel]));
-  const min = Math.min(...values) - 0.12;
-  const max = Math.max(...values) + 0.12;
+  const min = Math.floor((Math.min(...values) - 0.1) * 2) / 2;
+  const max = Math.ceil((Math.max(...values) + 0.1) * 2) / 2;
+  const range = Math.max(max - min, 0.5);
+  const plotRight = width - pad.right;
+  const baseline = height - pad.bottom;
   const x = (index: number) => pad.left + (events.length === 1 ? 0 : (index / (events.length - 1)) * (width - pad.left - pad.right));
-  const y = (value: number) => pad.top + ((max - value) / Math.max(max - min, 0.2)) * (height - pad.top - pad.bottom);
-  const coordinates = events.map((event, index) => `${x(index)},${y(Number(event[selectedFuel]))}`);
-  const area = `${pad.left},${height - pad.bottom} ${coordinates.join(" ")} ${x(events.length - 1)},${height - pad.bottom}`;
-  const grid = Array.from({ length: 4 }, (_, index) => {
-    const value = max - ((max - min) * index) / 3;
+  const y = (value: number) => pad.top + ((max - value) / range) * (height - pad.top - pad.bottom);
+  const points = events.map((event, index) => ({ event, x: x(index), y: y(Number(event[selectedFuel])) }));
+  const linePath = points.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`).join(" ");
+  const areaPath = `${linePath} L ${points[points.length - 1].x} ${baseline} L ${points[0].x} ${baseline} Z`;
+  const grid = Array.from({ length: 5 }, (_, index) => {
+    const value = max - (range * index) / 4;
     const yy = y(value);
-    return `<line x1="${pad.left}" y1="${yy}" x2="${width - pad.right}" y2="${yy}" class="grid-line"/><text x="0" y="${yy + 4}" class="axis-label">${value.toFixed(1)}</text>`;
+    return `<line x1="${pad.left}" y1="${yy}" x2="${plotRight}" y2="${yy}" class="grid-line"/><text x="${pad.left - 12}" y="${yy + 4}" text-anchor="end" class="axis-label">${value.toFixed(1)}</text>`;
   }).join("");
-  const dates = events.map((event, index) => index === 0 || index === events.length - 1 || index % Math.ceil(events.length / 4) === 0
-    ? `<text x="${x(index)}" y="${height - 7}" text-anchor="${index === 0 ? "start" : index === events.length - 1 ? "end" : "middle"}" class="axis-label">${formatShortDate(event.announced_on)}</text>`
-    : "").join("");
-  const points = events.map((event, index) => `<circle cx="${x(index)}" cy="${y(Number(event[selectedFuel]))}" r="3.5" class="chart-point"><title>${event.announced_on} · ¥${formatPrice(event[selectedFuel])}</title></circle>`).join("");
-  return `<svg class="chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="${fuelNames[selectedFuel]}历史价格趋势" preserveAspectRatio="none"><defs><linearGradient id="chart-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#94b9a4" stop-opacity=".28"/><stop offset="100%" stop-color="#94b9a4" stop-opacity="0"/></linearGradient></defs>${grid}<polygon points="${area}" fill="url(#chart-fill)"/><polyline points="${coordinates.join(" ")}" class="chart-line"/>${points}${dates}</svg>`;
+  const labelCount = Math.min(events.length, 5);
+  const labelIndices = Array.from({ length: labelCount }, (_, index) => labelCount === 1 ? 0 : Math.round((index * (events.length - 1)) / (labelCount - 1)));
+  const dates = labelIndices.map((index, labelIndex) => `<text x="${points[index].x}" y="${height - 10}" text-anchor="${labelIndex === 0 ? "start" : labelIndex === labelCount - 1 ? "end" : "middle"}" class="axis-label">${formatShortDate(events[index].announced_on)}</text>`).join("");
+  const markers = points.map((point, index) => `<circle cx="${point.x}" cy="${point.y}" r="${index === points.length - 1 ? 5 : 3.5}" class="chart-point ${index === points.length - 1 ? "chart-point-latest" : ""}"><title>${point.event.announced_on} · ¥${formatPrice(point.event[selectedFuel])}</title></circle>`).join("");
+  const latest = points[points.length - 1];
+  return `<svg class="chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="${fuelNames[selectedFuel]}历史价格趋势" preserveAspectRatio="none"><defs><linearGradient id="chart-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#6f9a7b" stop-opacity=".25"/><stop offset="100%" stop-color="#6f9a7b" stop-opacity=".015"/></linearGradient></defs>${grid}<path d="${areaPath}" class="chart-area"/><line x1="${pad.left}" y1="${latest.y}" x2="${plotRight}" y2="${latest.y}" class="chart-latest-line"/><path d="${linePath}" class="chart-line"/>${markers}<text x="${width - 5}" y="${latest.y + 4}" text-anchor="end" class="chart-latest-label">¥ ${formatPrice(latest.event[selectedFuel])}</text>${dates}</svg>`;
 }
 
 function bindChartInteractions() {
@@ -90,8 +94,8 @@ function bindChartInteractions() {
 
   const hoverLine = document.createElementNS("http://www.w3.org/2000/svg", "line");
   hoverLine.setAttribute("class", "chart-hover-line");
-  hoverLine.setAttribute("y1", "24");
-  hoverLine.setAttribute("y2", "200");
+  hoverLine.setAttribute("y1", String(chartLayout.pad.top));
+  hoverLine.setAttribute("y2", String(chartLayout.height - chartLayout.pad.bottom));
   hoverLine.style.opacity = "0";
   svg.insertBefore(hoverLine, points[0] ?? null);
   const hoverPoint = document.createElementNS("http://www.w3.org/2000/svg", "circle");
@@ -119,8 +123,8 @@ function bindChartInteractions() {
 
     const wrapBounds = chartWrap.getBoundingClientRect();
     const svgBounds = svg.getBoundingClientRect();
-    const pointX = (x / 780) * svgBounds.width;
-    const pointY = (y / 236) * svgBounds.height;
+    const pointX = (x / chartLayout.width) * svgBounds.width;
+    const pointY = (y / chartLayout.height) * svgBounds.height;
     const halfWidth = tooltip.offsetWidth / 2;
     const left = Math.max(halfWidth + 4, Math.min(wrapBounds.width - halfWidth - 4, pointX));
     const top = pointY < tooltip.offsetHeight + 12 ? pointY + 12 : pointY - tooltip.offsetHeight - 10;
@@ -138,9 +142,9 @@ function bindChartInteractions() {
 
   const nearestPoint = (clientX: number) => {
     const bounds = svg.getBoundingClientRect();
-    const viewX = ((clientX - bounds.left) / bounds.width) * 780;
-    const plotStart = 42;
-    const plotWidth = 780 - plotStart - 18;
+    const viewX = ((clientX - bounds.left) / bounds.width) * chartLayout.width;
+    const plotStart = chartLayout.pad.left;
+    const plotWidth = chartLayout.width - plotStart - chartLayout.pad.right;
     if (viewX < plotStart - 12 || viewX > plotStart + plotWidth + 12) return null;
     return Math.max(0, Math.min(events.length - 1, Math.round(((viewX - plotStart) / plotWidth) * (events.length - 1))));
   };
@@ -173,15 +177,28 @@ function render() {
     { code: "95", label: "95 号汽油", field: "price_95" as const, unit: "元 / 升", change: changeFor("price_95") },
     { code: "D0", label: "0 号柴油", field: "price_0" as const, unit: "元 / 升", change: changeFor("price_0") },
   ];
-  const history = fuelData.events.slice(0, 12).map((event, index) => {
-    const previous = fuelData.events.slice(index + 1).find((item) => !item.is_no_change);
-    const deltas = previous ? (["price_92", "price_95", "price_0"] as const)
-      .map((field) => event[field] == null || previous[field] == null ? 0 : Math.sign(Number(event[field]) - Number(previous[field])))
-      .filter((delta) => delta !== 0) : [];
-    const movement = event.is_no_change ? "不作调整" : !previous || deltas.length === 0 ? "价格记录" : deltas.every((delta) => delta > 0) ? "上调" : deltas.every((delta) => delta < 0) ? "下调" : "分品种调整";
-    const chipClass = event.is_no_change ? "quiet" : movement === "上调" ? "upward" : movement === "下调" ? "downward" : "active";
-    return `<tr><td><span class="date-cell">${event.announced_on}</span>${event.effective_at ? `<span class="effective-cell">${escapeHtml(event.effective_at.slice(0, 16).replace("T", " "))} 生效</span>` : ""}</td><td><span class="event-chip ${chipClass}"><i></i>${movement}</span></td><td>${formatPrice(event.price_92)}</td><td>${formatPrice(event.price_95)}</td><td>${formatPrice(event.price_0)}</td><td><a class="source-link" href="${escapeHtml(event.source_url)}" target="_blank" rel="noreferrer" aria-label="查看 ${event.announced_on} 官方公告">↗</a></td></tr>`;
+  const recordEvents = fuelData.events.filter((event) => event.announced_on >= "2026-01-01");
+  const eventsByYear = new Map<string, Event[]>();
+  recordEvents.forEach((event) => {
+    const year = event.announced_on.slice(0, 4);
+    const yearEvents = eventsByYear.get(year) ?? [];
+    yearEvents.push(event);
+    eventsByYear.set(year, yearEvents);
+  });
+  const history = [...eventsByYear.entries()].sort(([left], [right]) => right.localeCompare(left)).map(([year, events]) => {
+    const rows = events.map((event) => {
+      const index = fuelData.events.indexOf(event);
+      const previous = fuelData.events.slice(index + 1).find((item) => !item.is_no_change);
+      const deltas = previous ? (["price_92", "price_95", "price_0"] as const)
+        .map((field) => event[field] == null || previous[field] == null ? 0 : Math.sign(Number(event[field]) - Number(previous[field])))
+        .filter((delta) => delta !== 0) : [];
+      const movement = event.is_no_change ? "不作调整" : !previous || deltas.length === 0 ? "价格记录" : deltas.every((delta) => delta > 0) ? "上调" : deltas.every((delta) => delta < 0) ? "下调" : "分品种调整";
+      const chipClass = event.is_no_change ? "quiet" : movement === "上调" ? "upward" : movement === "下调" ? "downward" : "active";
+      return `<tr><td><span class="date-cell">${event.announced_on}</span>${event.effective_at ? `<span class="effective-cell">${escapeHtml(event.effective_at.slice(0, 16).replace("T", " "))} 生效</span>` : ""}</td><td><span class="event-chip ${chipClass}"><i></i>${movement}</span></td><td>${formatPrice(event.price_92)}</td><td>${formatPrice(event.price_95)}</td><td>${formatPrice(event.price_0)}</td><td><a class="source-link" href="${escapeHtml(event.source_url)}" target="_blank" rel="noreferrer" aria-label="查看 ${event.announced_on} 官方公告">↗</a></td></tr>`;
+    }).join("");
+    return `<section class="history-year"><div class="history-year-heading"><h3>${escapeHtml(year)} 年</h3><span>${events.length} 条调价记录</span></div><div class="history-card"><div class="table-scroll"><table><thead><tr><th>公告日期 / 生效时间</th><th>事件</th><th>92 号汽油</th><th>95 号汽油</th><th>0 号柴油</th><th>来源</th></tr></thead><tbody>${rows}</tbody></table></div><div class="table-foot"><span><i class="record-dot"></i> 每条价格均可追溯至官方公告</span><span>${year} 年 · 按公告日期倒序</span></div></div></section>`;
   }).join("");
+  const yearEvents = recordEvents;
   const lastUpdate = formatDate(fuelData.lastSuccessAt);
   const stateText = isUpdating ? "正在检查官方公告" : fuelData.lastSuccessAt ? `最近检查于 ${lastUpdate}` : "等待首次采集";
 
@@ -193,8 +210,8 @@ function render() {
         ${fuelData.latestRun?.status === "failed" ? `<div class="sync-warning"><span>ⓘ</span> 上次检查没有完成，页面仍保留此前有效价格。${fuelData.latestRun.error_summary ? ` <span>${escapeHtml(fuelData.latestRun.error_summary)}</span>` : ""}</div>` : ""}
         ${notice ? `<div class="notice ${notice.startsWith("更新成功") ? "success" : "error"}" role="status">${escapeHtml(notice)}</div>` : ""}
         <section class="price-section"><div class="section-heading"><div><span class="section-kicker">CURRENT SNAPSHOT</span><h2>当前零售限价</h2></div><div class="snapshot-note"><span class="note-dot"></span> ${latestEvent ? `${latestEvent.announced_on} 调价公告` : "等待官方数据"}</div></div><div class="price-grid">${latestValues.map((item, index) => `<article class="price-card card-${index}"><div class="card-top"><span class="fuel-code">${item.code}</span><span class="fuel-label">${item.label}</span><span class="card-more">↗</span></div><div class="price-main"><span class="currency">¥</span><span class="price-number">${formatPrice(newestPrice(item.field))}</span></div><div class="card-foot"><span>${item.unit}</span><span class="change-pill ${item.change == null ? "neutral" : item.change > 0 ? "up" : item.change < 0 ? "down" : "neutral"}">${item.change == null ? "历史待补录" : item.change > 0 ? `↑ ${item.change.toFixed(2)}` : item.change < 0 ? `↓ ${Math.abs(item.change).toFixed(2)}` : "— 0.00"}</span></div><div class="card-accent"></div></article>`).join("")}</div><p class="price-footnote">价格单位为元 / 升 · 涨跌对比上一条调价公告</p></section>
-        <section class="trend-section"><div class="section-heading trend-heading"><div><span class="section-kicker">PRICE HISTORY</span><h2>价格走势</h2></div><div class="fuel-tabs" role="tablist" aria-label="选择油品">${Object.entries(fuelNames).map(([key, label]) => `<button role="tab" aria-selected="${selectedFuel === key}" class="fuel-tab ${selectedFuel === key ? "selected" : ""}" data-fuel="${key}">${label}</button>`).join("")}</div></div><div class="trend-card"><div class="trend-meta"><div><span class="trend-current-label">${fuelNames[selectedFuel]} · 当前</span><div class="trend-current-price">¥ ${formatPrice(newestPrice(selectedFuel))}<span> / 升</span></div></div><div class="trend-period"><span class="period-label">追踪区间</span><span>${fuelData.events.length ? `${formatShortDate(fuelData.events[fuelData.events.length - 1].announced_on)} — ${formatShortDate(fuelData.events[0].announced_on)}` : "2026 年至今"}</span></div></div><div class="chart-wrap">${renderTrend()}</div><div class="chart-legend"><span><i></i> 每次调价公告价格</span><span class="chart-range">${fuelData.events.filter((event) => event.announced_on >= "2026-01-01").length} 条 2026 年事件</span></div></div></section>
-        <section class="history-section" id="history"><div class="section-heading history-heading"><div><span class="section-kicker">OFFICIAL RECORDS</span><h2>调价记录</h2></div><a class="all-records" href="https://fzggw.zj.gov.cn/col/col1632199/cpyjg/index.html" target="_blank" rel="noreferrer">访问官方栏目 <span>↗</span></a></div><div class="history-card"><div class="table-scroll"><table><thead><tr><th>公告日期 / 生效时间</th><th>事件</th><th>92 号汽油</th><th>95 号汽油</th><th>0 号柴油</th><th>来源</th></tr></thead><tbody>${history || `<tr><td colspan="6" class="empty-row"><span>暂无价格记录</span><small>点击“立即更新”从浙江省发改委补录公告</small></td></tr>`}</tbody></table></div><div class="table-foot"><span><i class="record-dot"></i> 每条价格均可追溯至官方公告</span><span>按公告日期倒序排列</span></div></div></section>
+        <section class="trend-section"><div class="section-heading trend-heading"><div><span class="section-kicker">PRICE HISTORY</span><h2>价格走势</h2></div><div class="fuel-tabs" role="tablist" aria-label="选择油品">${Object.entries(fuelNames).map(([key, label]) => `<button role="tab" aria-selected="${selectedFuel === key}" class="fuel-tab ${selectedFuel === key ? "selected" : ""}" data-fuel="${key}">${label}</button>`).join("")}</div></div><div class="trend-card"><div class="trend-meta"><div><span class="trend-current-label">${fuelNames[selectedFuel]} · 当前</span><div class="trend-current-price">¥ ${formatPrice(newestPrice(selectedFuel))}<span> / 升</span></div></div><div class="trend-period"><span class="period-label">追踪区间</span><span>${yearEvents.length ? `${formatShortDate(yearEvents[yearEvents.length - 1].announced_on)} — ${formatShortDate(yearEvents[0].announced_on)}` : "2026 年至今"}</span></div></div><div class="chart-wrap">${renderTrend()}</div><div class="chart-legend"><span><i></i> 每次调价公告价格</span><span class="chart-range">${yearEvents.length} 条记录 · 自 2026 年起</span></div></div></section>
+        <section class="history-section" id="history"><div class="section-heading history-heading"><div><span class="section-kicker">OFFICIAL RECORDS</span><h2>调价记录</h2></div><a class="all-records" href="https://fzggw.zj.gov.cn/col/col1632199/cpyjg/index.html" target="_blank" rel="noreferrer">访问官方栏目 <span>↗</span></a></div><div class="history-years">${history || `<div class="history-empty"><span>2026 年起暂无价格记录</span><small>点击“立即更新”从浙江省发改委补录公告</small></div>`}</div></section>
       </main>
       <footer><span class="footer-brand">知新 <span>FreshScope</span></span><span>把值得关注的信息，收进一页。</span><a href="https://fzggw.zj.gov.cn/col/col1632199/cpyjg/index.html" target="_blank" rel="noreferrer">数据来自浙江省发展和改革委员会 <span>↗</span></a></footer>
     </div>
