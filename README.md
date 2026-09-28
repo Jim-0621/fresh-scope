@@ -1,10 +1,10 @@
 # 知新 FreshScope
 
-追踪浙江省成品油价格公告的轻量网页应用。网站使用 Cloudflare Pages，API 与每日北京时间 08:00 的采集任务由 Cloudflare Worker 和 D1 提供；页面也提供带服务端凭证校验的手动更新。
+追踪浙江省成品油价格公告的轻量网页应用。网站使用 Cloudflare Pages，查询 API 由 Cloudflare Worker 和 D1 提供；油价由本机脚本读取官网后手动同步到 Cloudflare D1。
 
 ## 已有首发数据
 
-数据库迁移中预置交接文档已核对的 2026-09-24 价格：92 号汽油 8.58 元/升、95 号汽油 9.12 元/升、0 号柴油 8.28 元/升；另保留 2026-01-06 “不作调整”事件。首页会明确显示采集检查状态。首次采集器运行后，从浙江省发改委油价栏目补录可识别的 2026 年公告，事件按公告链接去重。
+数据库迁移中预置交接文档已核对的 2026-09-24 价格：92 号汽油 8.58 元/升、95 号汽油 9.12 元/升、0 号柴油 8.28 元/升；另保留 2026-01-06 “不作调整”事件。网页显示最近一次成功同步时间；首次运行本机脚本后，可从浙江省发改委油价栏目补录最近三年的公告，事件按公告链接去重。
 
 官方来源：
 
@@ -31,20 +31,28 @@ npx wrangler dev
 
 ## Cloudflare 初始化和部署
 
-如果 Cloudflare Worker 无法连接官网，可在能访问官网的本机生成 D1 更新 SQL：
+在能访问浙江发改委官网的电脑上运行下面的命令，即可采集并同步到 Cloudflare D1：
 
 ```sh
-node scripts/collect-local.mjs updates/fuel-2024-2026.sql
+npm run sync:fuel
 ```
 
-脚本只读取官网并写入本地 SQL 文件，不会连接或修改 D1。核对 SQL 后，可由有写入权限的操作者执行：
+首次使用前安装依赖，并登录 Wrangler 一次：
 
 ```sh
-npx wrangler d1 execute fresh-scope-db --remote --file updates/fuel-2024-2026.sql
+npm install
+npx wrangler login
 ```
 
-SQL 按官网公告链接去重，只填补数据库中缺失的价格和生效时间。此前解析错误形成的 `-10` 号柴油价格 `4.98` 会用官网价格修正；其他已有非空值不覆盖。它不会生成一次 Worker 采集成功记录，因此页面上的最近检查状态仍以 Worker 实际运行结果为准。
-本地脚本采集最近三个自然年（例如 2026 年运行时为 2024—2026 年）；网页和 API 也展示同一范围。线上定时采集只检查当前年份的近期公告，历史补录使用本地脚本。
+脚本会读取云端已有记录，只下载新公告或仍缺少价格/生效时间的公告；校验完所有公告后生成 `updates/fuel-sync-*.sql` 留档，再调用 Wrangler 写入远程 D1。来源 URL 用于幂等去重；已有非空价格和生效时间不会被覆盖，之前错误写入的 `-10` 号柴油价格 `4.98` 会按官网值修正。采集或校验失败时不会执行 D1 写入。同步完成后，网页会显示最近同步时间。
+
+脚本采集最近三个自然年（例如 2026 年运行时为 2024—2026 年）。也可以指定 SQL 留档路径：
+
+```sh
+npm run sync:fuel -- updates/my-fuel-sync.sql
+```
+
+运行机器需要能访问浙江发改委官网，并已通过 `npx wrangler login` 登录有 `fresh-scope-db` 写入权限的 Cloudflare 账号。
 
 登录 Wrangler 后创建 D1 数据库，并把返回的数据库 ID 写入 `wrangler.jsonc` 的 `d1_databases[0].database_id`：
 
@@ -53,23 +61,20 @@ npx wrangler login
 npx wrangler d1 create fresh-scope-db
 npm run db:migrate:remote
 npm run build
-npx wrangler secret put UPDATE_TOKEN --name fresh-scope
 npx wrangler deploy
 ```
 
-`UPDATE_TOKEN` 只在 Worker 服务端保存。手动更新页面第一次使用时会要求输入凭证；输入值保存在当前浏览器的本地存储中，不会写入前端构建产物。保护凭证应保持私密并使用足够随机的值。
-
-Cron `0 0 * * *` 使用 UTC，即每天北京时间 08:00。请到 Cloudflare Dashboard 确认部署后触发器已启用。未配置 `UPDATE_TOKEN` 时手动更新接口会拒绝服务；只读页面无需登录。
+Worker 只提供只读油价查询接口，不配置官网采集 Cron，也不提供网页手动更新接口。公开页面无需登录。
 
 ## Cloudflare Pages
 
-网站发布到 https://fresh-scope.pages.dev。Pages Function 通过 Service Binding 将 /api/* 转发到 fresh-scope Worker，因此网页地址不依赖 Cloudflare 账号的 workers.dev 子域名；Worker 仍负责 D1 和每日定时采集。首次部署时先用 Wrangler 创建 fresh-scope Pages 项目，再运行 npm run deploy:pages。
+网站发布到 https://fresh-scope.pages.dev。Pages Function 通过 Service Binding 将 /api/* 转发到 fresh-scope Worker，因此网页地址不依赖 Cloudflare 账号的 workers.dev 子域名；Worker 只负责从 D1 查询数据。首次部署时先用 Wrangler 创建 fresh-scope Pages 项目，再运行 `npm run deploy:pages`。
 
 ## 数据处理
 
 - 价格公告按来源 URL 幂等去重；“不作调整”以独立事件保留，价格沿用上一份有效价格。
-- 手动更新接口要求 `Authorization: Bearer <UPDATE_TOKEN>`，并有 5 分钟频率限制和共享采集锁。
-- 公告解析和字段校验全部完成后才开始写入。采集失败写入运行记录，保留原有有效价格。
-- 采集器优先直连浙江省发改委；Cloudflare 出站访问超时时，通过 Jina Reader 读取同一官方公告 URL，来源仍为省发改委原文。
+- 网页和 Worker 不提供在线更新入口；油价更新由本地脚本执行。
+- 本地脚本先完成公告读取和字段校验，再通过 Wrangler 同步 D1；按公告 URL 去重，只补充缺失字段并保留已有有效值。
+- 采集器优先直连浙江省发改委；直连失败时，通过 Jina Reader 读取同一官方公告 URL，来源仍为省发改委原文。
 - 页面时间按 `Asia/Shanghai` 显示，公告日期和价格生效时间分开存储。
 - 需监控浙江发改委公告 HTML 结构变化；解析器无法确认必需价格时会拒绝本轮写入。
