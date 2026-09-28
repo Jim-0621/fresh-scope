@@ -31,6 +31,21 @@ npx wrangler dev
 
 ## Cloudflare 初始化和部署
 
+如果 Cloudflare Worker 无法连接官网，可在能访问官网的本机生成 D1 更新 SQL：
+
+```sh
+node scripts/collect-local.mjs updates/fuel-2024-2026.sql
+```
+
+脚本只读取官网并写入本地 SQL 文件，不会连接或修改 D1。核对 SQL 后，可由有写入权限的操作者执行：
+
+```sh
+npx wrangler d1 execute fresh-scope-db --remote --file updates/fuel-2024-2026.sql
+```
+
+SQL 按官网公告链接去重，只填补数据库中缺失的价格和生效时间。此前解析错误形成的 `-10` 号柴油价格 `4.98` 会用官网价格修正；其他已有非空值不覆盖。它不会生成一次 Worker 采集成功记录，因此页面上的最近检查状态仍以 Worker 实际运行结果为准。
+本地脚本采集最近三个自然年（例如 2026 年运行时为 2024—2026 年）；网页和 API 也展示同一范围。线上定时采集只检查当前年份的近期公告，历史补录使用本地脚本。
+
 登录 Wrangler 后创建 D1 数据库，并把返回的数据库 ID 写入 `wrangler.jsonc` 的 `d1_databases[0].database_id`：
 
 ```sh

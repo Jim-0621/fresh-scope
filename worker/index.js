@@ -27,7 +27,7 @@ async function runCollection(db, triggerType) {
     const knownBySourceKey = new Map(knownEvents.results.map((event) => [event.source_key, event]));
     const completeSourceKeys = new Set(
       knownEvents.results
-        .filter((event) => event.effective_at && (event.is_no_change || (event.price_92 != null && event.price_95 != null && event.price_0 != null)))
+        .filter((event) => event.is_no_change || (event.effective_at && event.price_92 != null && event.price_95 != null && event.price_0 != null))
         .map((event) => event.source_key),
     );
     const events = await collectOfficialPrices(completeSourceKeys);
@@ -106,8 +106,9 @@ function latestSuccessfulCheck(db) {
 async function api(request, env) {
   const url = new URL(request.url);
   if (url.pathname === "/api/fuel" && request.method === "GET") {
+    const startYear = Number(new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Shanghai", year: "numeric" }).format(new Date())) - 2;
     const [events, latestRun, latestSuccess] = await Promise.all([
-      env.DB.prepare("SELECT * FROM fuel_events ORDER BY announced_on DESC, id DESC LIMIT 100").all(),
+      env.DB.prepare("SELECT * FROM fuel_events WHERE announced_on >= ? ORDER BY announced_on DESC, id DESC").bind(`${startYear}-01-01`).all(),
       env.DB.prepare("SELECT trigger_type, started_at, finished_at, status, discovered_count, inserted_count, error_summary FROM collection_runs ORDER BY id DESC LIMIT 1").first(),
       latestSuccessfulCheck(env.DB),
     ]);

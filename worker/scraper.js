@@ -35,7 +35,7 @@ function collectLinks(html) {
       continue;
     }
     if (resolved.hostname !== "fzggw.zj.gov.cn") continue;
-    if (/\/art\/2026\//.test(resolved.pathname) || /(?:2026|二〇二六|二○二六)/.test(title)) {
+    if (/\/art\/20\d{2}\//.test(resolved.pathname)) {
       links.push({ url: resolved.href.split("#")[0], title });
     }
   }
@@ -44,16 +44,16 @@ function collectLinks(html) {
 
 function eventDate(title, url, body) {
   const sources = `${title} ${url} ${body.slice(0, 1500)}`;
-  const iso = sources.match(/(202[56])[/-](\d{1,2})[/-](\d{1,2})/);
+  const iso = sources.match(/(20\d{2})[/-](\d{1,2})[/-](\d{1,2})/);
   if (iso) return `${iso[1]}-${iso[2].padStart(2, "0")}-${iso[3].padStart(2, "0")}`;
-  const chinese = sources.match(/(202[56])\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日/);
+  const chinese = sources.match(/(20\d{2})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日/);
   if (chinese) return `${chinese[1]}-${chinese[2].padStart(2, "0")}-${chinese[3].padStart(2, "0")}`;
   const pathDate = url.match(/\/art\/(\d{4})\/(\d{1,2})\/(\d{1,2})\//);
   if (pathDate) return `${pathDate[1]}-${pathDate[2].padStart(2, "0")}-${pathDate[3].padStart(2, "0")}`;
   return null;
 }
 
-function priceAfterLabel(body, labelPattern, nextLabels) {
+function priceAfterLabel(body, labelPattern, nextLabels, pickFirst = false) {
   const label = new RegExp(labelPattern, "i").exec(body);
   if (!label) return null;
   const tail = body.slice(label.index + label[0].length);
@@ -63,7 +63,7 @@ function priceAfterLabel(body, labelPattern, nextLabels) {
     if (next && next.index < end) end = next.index;
   }
   const matches = [...tail.slice(0, end).matchAll(/([0-9]{1,2}\.[0-9]{2})/g)];
-  for (const match of matches.reverse()) {
+  for (const match of pickFirst ? matches : matches.reverse()) {
     const value = Number(match[1]);
     if (value >= 3 && value <= 15) return value;
   }
@@ -79,15 +79,15 @@ function parsePrices(body) {
     "(?:0\\s*号(?:柴油)?|0#柴油)",
     "(?:-10\\s*号(?:柴油)?|零下10\\s*号(?:柴油)?|-10#柴油)",
   ];
-  const value = (index) => priceAfterLabel(normalized, labels[index], labels.slice(index + 1));
+  const value = (index) => priceAfterLabel(normalized, labels[index], labels.slice(index + 1), index === 4);
   return { price89: value(0), price92: value(1), price95: value(2), price0: value(3), priceM10: value(4) };
 }
 
-function effectiveTime(body) {
-  const match = body.match(/(?:自|从)\s*(?:2026年)?\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日\s*(?:(\d{1,2})\s*时|零时)?(?:起|开始|零时起(?:生效|执行|施行|实施)?)/);
+function effectiveTime(body, announcedOn) {
+  const match = body.match(/(?:自|从)\s*(?:(20\d{2})年)?\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日\s*(?:(\d{1,2})\s*时|零时)?(?:起|开始|零时起(?:生效|执行|施行|实施)?)/);
   if (!match) return null;
-  const hour = Number(match[3] ?? 0);
-  const date = new Date(Date.UTC(2026, Number(match[1]) - 1, Number(match[2]) + (hour === 24 ? 1 : 0)));
+  const hour = Number(match[4] ?? 0);
+  const date = new Date(Date.UTC(Number(match[1] ?? announcedOn.slice(0, 4)), Number(match[2]) - 1, Number(match[3]) + (hour === 24 ? 1 : 0)));
   const year = date.getUTCFullYear();
   const month = String(date.getUTCMonth() + 1).padStart(2, "0");
   const day = String(date.getUTCDate()).padStart(2, "0");
@@ -102,7 +102,10 @@ function jinaUrl(url) {
 }
 
 async function fetchProxyText(url, timeoutMs) {
-  const wrapped = await requestText(jinaUrl(url), timeoutMs);
+  const wrapped = await requestText(jinaUrl(url), timeoutMs, {
+    accept: "text/plain, */*;q=0.9",
+    "user-agent": "FreshScope/1.0 (+personal price tracker)",
+  });
   const marker = "\nMarkdown Content:\n";
   const contentStart = wrapped.indexOf(marker);
   if (contentStart < 0) throw new Error("备用读取未返回公告正文");
@@ -138,7 +141,9 @@ async function fetchText(url, { timeoutMs = 12000, proxyTimeoutMs = 20000 } = {}
   }
 }
 
-export async function collectOfficialPrices(knownSourceKeys = new Set()) {
+export async function collectOfficialPrices(knownSourceKeys = new Set(), years = 1) {
+  const startYear = Number(new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Shanghai", year: "numeric" }).format(new Date())) - years + 1;
+  const startDate = `${startYear}-01-01`;
   const listingUrl = new URL(LIST_URL);
   for (const [key, value] of Object.entries({
     parseType: "bulidstatic",
@@ -184,7 +189,7 @@ export async function collectOfficialPrices(knownSourceKeys = new Set()) {
         "user-agent": "FreshScope/1.0 (+personal price tracker)",
         referer: LIST_PAGE_URL,
       });
-      if (collectLinks(listingHtml).length === 0) throw new Error("栏目页中未找到 2026 年公告链接。");
+      if (collectLinks(listingHtml).length === 0) throw new Error("栏目页中未找到公告链接。");
     } catch (error) {
       listingPageError = error;
       listingHtml = null;
@@ -200,11 +205,20 @@ export async function collectOfficialPrices(knownSourceKeys = new Set()) {
   }
 
   const links = collectLinks(listingHtml);
+  if (years > 1) {
+    for (let pageNo = 2; pageNo <= 10; pageNo += 1) {
+      listingUrl.searchParams.set("paramJson", JSON.stringify({ pageNo, pageSize: 30 }));
+      const pageLinks = collectLinks(listingHtmlFromJson(await requestText(listingUrl.href, 12000)));
+      if (pageLinks.length === 0) break;
+      links.push(...pageLinks);
+      if (pageLinks.some(({ url }) => /\/art\/(20\d{2})\//.test(url) && Number(url.match(/\/art\/(20\d{2})\//)[1]) < startYear)) break;
+    }
+  }
   const uniqueLinks = new Map([...links, ...EXTRA_URLS.map((url) => ({ url, title: "浙江省成品油价格公告" }))].map((item) => [item.url, item]));
-  if (links.length === 0) throw new Error("未能从官方油价栏目找到 2026 年公告链接，可能是页面结构发生变化。");
+  if (links.length === 0) throw new Error("未能从官方油价栏目找到公告链接，可能是页面结构发生变化。");
 
   const events = [];
-  const pages = [...uniqueLinks.values()].filter(({ url }) => !knownSourceKeys.has(url));
+  const pages = [...uniqueLinks.values()].filter(({ url }) => !knownSourceKeys.has(url) && (!/\/art\/(20\d{2})\//.test(url) || Number(url.match(/\/art\/(20\d{2})\//)[1]) >= startYear));
   if (pages.length === 0) return [];
   for (let offset = 0; offset < pages.length; offset += 4) {
     const batch = await Promise.all(pages.slice(offset, offset + 4).map(async ({ url, title }) => {
@@ -212,18 +226,18 @@ export async function collectOfficialPrices(knownSourceKeys = new Set()) {
       const body = plainText(html);
       const htmlTitle = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? "";
       const announcedOn = eventDate(`${title} ${plainText(htmlTitle)}`, url, body);
-      if (!announcedOn || announcedOn < "2025-12-01") return null;
+      if (!announcedOn || announcedOn < startDate) return null;
 
       const isNoChange = /不作调整|暂不调整|维持现行价格|不作变动/.test(body);
       const prices = parsePrices(body);
-      if (announcedOn >= "2026-01-01" && !isNoChange && (!prices.price92 || !prices.price95 || !prices.price0)) {
+      if (!isNoChange && (!prices.price92 || !prices.price95 || !prices.price0)) {
         throw new Error(`${announcedOn} 公告缺少 92、95 号汽油或 0 号柴油价格，未保存此次采集结果。`);
       }
-      return { sourceKey: url, announcedOn, effectiveAt: effectiveTime(body), isNoChange, ...prices, sourceUrl: url };
+      return { sourceKey: url, announcedOn, effectiveAt: effectiveTime(body, announcedOn), isNoChange, ...prices, sourceUrl: url };
     }));
     events.push(...batch.filter(Boolean));
   }
-  if (events.length === 0) throw new Error("找到的官方公告中没有可识别的 2026 年调价事件。");
+  if (events.length === 0) throw new Error("找到的官方公告中没有可识别的调价事件。");
   events.sort((left, right) => left.announcedOn.localeCompare(right.announcedOn));
   let lastPrices = null;
   for (const event of events) {
@@ -236,5 +250,5 @@ export async function collectOfficialPrices(knownSourceKeys = new Set()) {
     }
     if (event.price92 != null && event.price95 != null && event.price0 != null) lastPrices = event;
   }
-  return events.filter((event) => event.announcedOn >= "2026-01-01");
+  return events.filter((event) => event.announcedOn >= startDate);
 }
