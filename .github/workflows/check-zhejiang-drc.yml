@@ -13,6 +13,18 @@ permissions:
 
 jobs:
   probe:
+    name: Probe ${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - target: api
+            label: official listing API
+          - target: column
+            label: official oil-price page
+          - target: announcement
+            label: 2026-09-24 official announcement
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
@@ -20,5 +32,5 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Request official list and announcement from the GitHub runner
-        run: node scripts/probe-zhejiang-drc.mjs
+      - name: Request selected official source from the GitHub runner
+        run: node scripts/probe-zhejiang-drc.mjs ${{ matrix.target }}
