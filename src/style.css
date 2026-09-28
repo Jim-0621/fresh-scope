@@ -112,3 +112,80 @@ footer { display: flex; align-items: center; gap: 18px; margin-top: 53px; min-he
   .history-year-heading h3 { font-size: 15px; }
   .history-years { gap: 15px; }
 }
+
+/* Readable type and touch targets across the price dashboard. */
+.brand-word { font-size: 19px; }
+.topbar-right { font-size: 14px; }
+.eyebrow { font-size: 11px; }
+.intro-copy { font-size: 16px; }
+.update-button { min-height: 48px; font-size: 14px; }
+.status-line { min-height: 48px; font-size: 13px; }
+.sync-warning,.notice { font-size: 14px; overflow-wrap: anywhere; }
+.section-kicker { font-size: 10px; }
+h2 { font-size: 23px; }
+.snapshot-note { font-size: 13px; }
+.price-card { min-height: 178px; padding: 22px; }
+.fuel-code { font-size: 12px; }
+.fuel-label { font-size: 15px; }
+.price-main { margin-top: 19px; }
+.currency { font-size: 18px; }
+.price-number { font-size: 42px; }
+.card-foot { font-size: 13px; }
+.change-pill { padding: 6px 9px; font-size: 12px; }
+.price-footnote { font-size: 12px; }
+.fuel-tab { min-height: 42px; padding: 10px 16px; font-size: 14px; }
+.trend-current-label,.period-label,.trend-period { font-size: 13px; }
+.trend-current-price { font-size: 29px; }
+.trend-current-price span { font-size: 13px; }
+.chart-legend { font-size: 12px; }
+.axis-label { font-size: 12px; }
+.chart-latest-label { font: 600 13px "DM Mono",monospace; }
+.chart-tooltip { padding: 9px 11px; font-size: 13px; }
+.chart-tooltip strong { font-size: 16px; }
+.history-year-heading h3 { font-size: 21px; }
+.history-year-heading span { font-size: 12px; }
+.history-years { grid-template-columns: minmax(0,1fr); }
+.history-year,.history-card { min-width: 0; }
+.table-scroll { max-width: 100%; }
+.all-records { font-size: 13px; }
+th { height: 48px; font-size: 12px; }
+td { height: 64px; font-size: 14px; }
+.effective-cell { font-size: 12px; }
+.event-chip { font-size: 13px; }
+.source-link { width: 34px; height: 34px; font-size: 16px; }
+.table-foot { font-size: 12px; line-height: 1.5; }
+footer { font-size: 12px; }
+.footer-brand { font-size: 13px; }
+.token-dialog h2 { font-size: 23px; }
+.token-dialog p,.token-dialog label,.token-dialog input,.dialog-actions button { font-size: 14px; }
+
+@media (max-width: 760px) {
+  .topbar-right { font-size: 12px; }
+  .intro-copy { font-size: 14px; }
+  .status-line { font-size: 12px; }
+  .price-card { min-height: 155px; padding: 18px; }
+  .fuel-label { font-size: 14px; }
+  .price-number { font-size: 34px; }
+  .fuel-tab { padding: 9px 10px; font-size: 12px; }
+  .history-year-heading h3 { font-size: 19px; }
+  .table-foot { flex-wrap: wrap; gap: 5px 14px; }
+}
+
+@media (max-width: 600px) {
+  .price-grid { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }
+  .price-card:last-child { grid-column: 1 / -1; }
+}
+
+@media (max-width: 420px) {
+  .brand-word { font-size: 17px; }
+  .top-link,.top-context { font-size: 12px; }
+  .snapshot-note { font-size: 12px; }
+  .price-card { padding: 17px 15px; }
+  .fuel-label { font-size: 13px; }
+  .price-number { font-size: 32px; }
+  .currency { font-size: 15px; }
+  .card-foot { font-size: 12px; }
+  .trend-current-price { font-size: 25px; }
+  .trend-period { font-size: 11px; }
+  .chart-legend { flex-wrap: wrap; gap: 4px 10px; }
+}

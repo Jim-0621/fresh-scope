@@ -17,7 +17,11 @@ type FuelData = { events: Event[]; lastSuccessAt: string | null; latestRun: { st
 
 const root = document.querySelector<HTMLDivElement>("#app")!;
 const tokenStorageKey = "fresh-scope-update-token";
-const chartLayout = { width: 920, height: 300, pad: { top: 28, right: 82, bottom: 40, left: 58 } };
+const chartLayout = () => {
+  const viewport = window.innerWidth;
+  const width = Math.min(920, viewport - (viewport <= 420 ? 60 : viewport <= 760 ? 72 : 124));
+  return { width, height: 300, pad: { top: 28, right: width <= 500 ? 60 : 82, bottom: 44, left: width <= 500 ? 46 : 58 } };
+};
 const firstYear = Number(new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Shanghai", year: "numeric" }).format(new Date())) - 2;
 const firstDate = `${firstYear}-01-01`;
 let selectedFuel: "price_92" | "price_95" | "price_0" = "price_95";
@@ -48,7 +52,7 @@ function changeFor(field: "price_92" | "price_95" | "price_0") {
 
 function renderTrend() {
   const events = [...fuelData.events].filter((event) => event.announced_on >= firstDate && event[selectedFuel] != null).reverse();
-  const { width, height, pad } = chartLayout;
+  const { width, height, pad } = chartLayout();
   if (events.length === 0) return `<div class="chart-empty"><span class="chart-empty-icon">↗</span><p>官网历史数据采集后，价格曲线会显示在这里</p></div>`;
   const values = events.map((event) => Number(event[selectedFuel]));
   const min = Math.floor((Math.min(...values) - 0.1) * 2) / 2;
@@ -66,7 +70,7 @@ function renderTrend() {
     const yy = y(value);
     return `<line x1="${pad.left}" y1="${yy}" x2="${plotRight}" y2="${yy}" class="grid-line"/><text x="${pad.left - 12}" y="${yy + 4}" text-anchor="end" class="axis-label">${value.toFixed(1)}</text>`;
   }).join("");
-  const labelCount = Math.min(events.length, 5);
+  const labelCount = Math.min(events.length, width <= 420 ? 3 : 5);
   const labelIndices = Array.from({ length: labelCount }, (_, index) => labelCount === 1 ? 0 : Math.round((index * (events.length - 1)) / (labelCount - 1)));
   const dates = labelIndices.map((index, labelIndex) => `<text x="${points[index].x}" y="${height - 10}" text-anchor="${labelIndex === 0 ? "start" : labelIndex === labelCount - 1 ? "end" : "middle"}" class="axis-label">${formatShortDate(events[index].announced_on)}</text>`).join("");
   const markers = points.map((point, index) => `<circle cx="${point.x}" cy="${point.y}" r="${index === points.length - 1 ? 5 : 3.5}" class="chart-point ${index === points.length - 1 ? "chart-point-latest" : ""}"><title>${point.event.announced_on} · ¥${formatPrice(point.event[selectedFuel])}</title></circle>`).join("");
@@ -78,6 +82,7 @@ function bindChartInteractions() {
   const svg = root.querySelector<SVGSVGElement>(".chart-svg");
   const chartWrap = root.querySelector<HTMLElement>(".chart-wrap");
   if (!svg || !chartWrap) return;
+  const layout = chartLayout();
 
   const events = [...fuelData.events].filter((event) => event[selectedFuel] != null).reverse();
   const points = [...svg.querySelectorAll<SVGCircleElement>(".chart-point")];
@@ -96,8 +101,8 @@ function bindChartInteractions() {
 
   const hoverLine = document.createElementNS("http://www.w3.org/2000/svg", "line");
   hoverLine.setAttribute("class", "chart-hover-line");
-  hoverLine.setAttribute("y1", String(chartLayout.pad.top));
-  hoverLine.setAttribute("y2", String(chartLayout.height - chartLayout.pad.bottom));
+  hoverLine.setAttribute("y1", String(layout.pad.top));
+  hoverLine.setAttribute("y2", String(layout.height - layout.pad.bottom));
   hoverLine.style.opacity = "0";
   svg.insertBefore(hoverLine, points[0] ?? null);
   const hoverPoint = document.createElementNS("http://www.w3.org/2000/svg", "circle");
@@ -125,8 +130,8 @@ function bindChartInteractions() {
 
     const wrapBounds = chartWrap.getBoundingClientRect();
     const svgBounds = svg.getBoundingClientRect();
-    const pointX = (x / chartLayout.width) * svgBounds.width;
-    const pointY = (y / chartLayout.height) * svgBounds.height;
+    const pointX = (x / layout.width) * svgBounds.width;
+    const pointY = (y / layout.height) * svgBounds.height;
     const halfWidth = tooltip.offsetWidth / 2;
     const left = Math.max(halfWidth + 4, Math.min(wrapBounds.width - halfWidth - 4, pointX));
     const top = pointY < tooltip.offsetHeight + 12 ? pointY + 12 : pointY - tooltip.offsetHeight - 10;
@@ -144,9 +149,9 @@ function bindChartInteractions() {
 
   const nearestPoint = (clientX: number) => {
     const bounds = svg.getBoundingClientRect();
-    const viewX = ((clientX - bounds.left) / bounds.width) * chartLayout.width;
-    const plotStart = chartLayout.pad.left;
-    const plotWidth = chartLayout.width - plotStart - chartLayout.pad.right;
+    const viewX = ((clientX - bounds.left) / bounds.width) * layout.width;
+    const plotStart = layout.pad.left;
+    const plotWidth = layout.width - plotStart - layout.pad.right;
     if (viewX < plotStart - 12 || viewX > plotStart + plotWidth + 12) return null;
     return Math.max(0, Math.min(events.length - 1, Math.round(((viewX - plotStart) / plotWidth) * (events.length - 1))));
   };
@@ -282,3 +287,14 @@ async function loadData() {
 
 await loadData();
 render();
+
+let lastChartWidth = chartLayout().width;
+window.addEventListener("resize", () => {
+  const nextWidth = chartLayout().width;
+  if (nextWidth === lastChartWidth) return;
+  lastChartWidth = nextWidth;
+  const chartWrap = root.querySelector<HTMLElement>(".chart-wrap");
+  if (!chartWrap) return;
+  chartWrap.innerHTML = renderTrend();
+  bindChartInteractions();
+});
