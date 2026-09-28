@@ -82,9 +82,11 @@ async function runCollection(db, triggerType) {
     return { status: "success", discoveredCount, insertedCount, updatedCount };
   } catch (error) {
     const summary = String(error?.message || error).slice(0, 300);
-    const message = /timeout/i.test(summary)
-      ? "浙江发改委官网暂未响应，现有油价数据已保留，请稍后重试。"
-      : "官方公告读取或校验失败，现有油价数据已保留。";
+    const message = /备用读取 HTTP 429/i.test(summary)
+      ? "官网直连失败，备用读取服务触发 HTTP 429 限流；现有油价数据已保留。"
+      : /timeout/i.test(summary)
+        ? "浙江发改委官网暂未响应，现有油价数据已保留，请稍后重试。"
+        : "官方公告读取或校验失败，现有油价数据已保留。";
     await db
       .prepare("UPDATE collection_runs SET finished_at = ?, status = 'failed', error_summary = ? WHERE id = ?")
       .bind(new Date().toISOString(), summary, runId)

@@ -101,21 +101,29 @@ function jinaUrl(url) {
   return `https://r.jina.ai/${target.href}${query ? `%3F${encodeURIComponent(query)}` : ""}`;
 }
 
-async function requestText(url, timeoutMs) {
+async function fetchProxyText(url, timeoutMs) {
+  const wrapped = await requestText(jinaUrl(url), timeoutMs);
+  const marker = "\nMarkdown Content:\n";
+  const contentStart = wrapped.indexOf(marker);
+  if (contentStart < 0) throw new Error("备用读取未返回公告正文");
+  return wrapped.slice(contentStart + marker.length);
+}
+
+async function requestText(url, timeoutMs, headers = {
+  accept: "*/*",
+  "user-agent": "FreshScope/1.0 (+personal price tracker)",
+  referer: LIST_PAGE_URL,
+  "x-requested-with": "XMLHttpRequest",
+}) {
   const response = await fetch(url, {
-    headers: {
-      accept: "*/*",
-      "user-agent": "FreshScope/1.0 (+personal price tracker)",
-      referer: LIST_PAGE_URL,
-      "x-requested-with": "XMLHttpRequest",
-    },
+    headers,
     signal: AbortSignal.timeout(timeoutMs),
   });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   return response.text();
 }
 
-async function fetchText(url, { timeoutMs = 4000, proxyTimeoutMs = 20000 } = {}) {
+async function fetchText(url, { timeoutMs = 12000, proxyTimeoutMs = 20000 } = {}) {
   let directError;
   try {
     return await requestText(url, timeoutMs);
@@ -124,11 +132,7 @@ async function fetchText(url, { timeoutMs = 4000, proxyTimeoutMs = 20000 } = {})
   }
 
   try {
-    const wrapped = await requestText(jinaUrl(url), proxyTimeoutMs);
-    const marker = "\nMarkdown Content:\n";
-    const contentStart = wrapped.indexOf(marker);
-    if (contentStart < 0) throw new Error("备用读取未返回公告正文");
-    return wrapped.slice(contentStart + marker.length);
+    return await fetchProxyText(url, proxyTimeoutMs);
   } catch (proxyError) {
     throw new Error(`读取官网页面失败（${new URL(url).pathname}）：直连 ${directError?.message || directError}；备用读取 ${proxyError?.message || proxyError}`);
   }
@@ -148,17 +152,54 @@ export async function collectOfficialPrices(knownSourceKeys = new Set()) {
   })) {
     listingUrl.searchParams.set(key, value);
   }
-  const listingResponse = await fetchText(listingUrl.href, { timeoutMs: 4000, proxyTimeoutMs: 20000 });
-  let listingData;
+  const listingHtmlFromJson = (response) => {
+    let data;
+    try {
+      data = JSON.parse(response);
+    } catch {
+      throw new Error("官网油价列表接口返回了无法识别的数据。");
+    }
+    if (!data.success || typeof data.data?.html !== "string") {
+      throw new Error("官网油价列表接口未返回公告列表。");
+    }
+    if (collectLinks(data.data.html).length === 0) {
+      throw new Error("官网油价列表接口未返回可识别的公告链接。");
+    }
+    return data.data.html;
+  };
+
+  let listingHtml;
+  let listingApiError;
   try {
-    listingData = JSON.parse(listingResponse);
-  } catch {
-    throw new Error("官网油价列表接口返回了无法识别的数据。");
+    listingHtml = listingHtmlFromJson(await requestText(listingUrl.href, 12000));
+  } catch (error) {
+    listingApiError = error;
   }
-  if (!listingData.success || typeof listingData.data?.html !== "string") {
-    throw new Error("官网油价列表接口未返回公告列表。");
+
+  let listingPageError;
+  if (!listingHtml) {
+    try {
+      listingHtml = await requestText(LIST_PAGE_URL, 12000, {
+        accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "user-agent": "FreshScope/1.0 (+personal price tracker)",
+        referer: LIST_PAGE_URL,
+      });
+      if (collectLinks(listingHtml).length === 0) throw new Error("栏目页中未找到 2026 年公告链接。");
+    } catch (error) {
+      listingPageError = error;
+      listingHtml = null;
+    }
   }
-  const links = collectLinks(listingData.data.html);
+
+  if (!listingHtml) {
+    try {
+      listingHtml = listingHtmlFromJson(await fetchProxyText(listingUrl.href, 20000));
+    } catch (proxyError) {
+      throw new Error(`官网油价列表读取失败：接口 ${listingApiError?.message || listingApiError}；栏目页 ${listingPageError?.message || listingPageError}；备用读取 ${proxyError?.message || proxyError}`);
+    }
+  }
+
+  const links = collectLinks(listingHtml);
   const uniqueLinks = new Map([...links, ...EXTRA_URLS.map((url) => ({ url, title: "浙江省成品油价格公告" }))].map((item) => [item.url, item]));
   if (links.length === 0) throw new Error("未能从官方油价栏目找到 2026 年公告链接，可能是页面结构发生变化。");
 
