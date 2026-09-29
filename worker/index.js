@@ -40,6 +40,33 @@ function mapCatalogRow(row) {
   };
 }
 
+function isTextClientModel(namespace, slug, name) {
+  if (!/^(?:anthropic|openai)$/.test(namespace)) return false;
+  if (namespace === "anthropic" && !/^claude-/i.test(slug)) return false;
+  if (namespace === "openai" && !/^gpt-/i.test(slug)) return false;
+  const value = `${slug} ${name}`;
+  if (/(?:^|[\s/_-])(?:audio|image|video|speech|vision|realtime|transcribe|transcription|tts|whisper|dall[\s-]?e|sora|non[\s_-]*reasoning)(?:$|[\s/_-])/i.test(value)) return false;
+  return !/(?:^|[-_:\s])(?:batch|latest|pro|free|nitro|online|extended|exacto|preview|codex)(?:$|[-_:\s])/i.test(value);
+}
+
+function cleanModelName(value) {
+  return String(value ?? "")
+    .replace(/&#x([\da-f]+);/gi, (_, hex) => {
+      const codePoint = parseInt(hex, 16);
+      return codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : "";
+    })
+    .replace(/&#(\d+);/g, (_, decimal) => {
+      const codePoint = Number(decimal);
+      return codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : "";
+    })
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/<[^>]*>/g, "")
+    .replace(/\*\*/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 async function readCatalogSnapshot(db, snapshot) {
   if (!snapshot) return null;
   const rows = await db
@@ -111,16 +138,16 @@ async function fetchModelCatalog() {
   const payload = await upstream.json();
   const models = (Array.isArray(payload.data) ? payload.data : []).flatMap((model) => {
     const id = String(model.id ?? "");
-    const lowerId = id.toLowerCase();
-    const description = `${id} ${String(model.name ?? "")}`.toLowerCase();
-    if (/non[\s_-]*reasoning/.test(description)) return [];
-    const provider = lowerId.startsWith("anthropic/") ? "Anthropic" : lowerId.startsWith("openai/") ? "OpenAI" : null;
+    const [namespace, slug, ...variants] = id.toLowerCase().split("/");
+    const name = cleanModelName(model.name ?? id);
+    if (variants.length || !slug || slug.includes(":") || !isTextClientModel(namespace, slug, name)) return [];
+    const provider = namespace === "anthropic" ? "Anthropic" : namespace === "openai" ? "OpenAI" : null;
     if (!provider) return [];
     const created = nullableNumber(model.created);
     const pricing = model.pricing ?? {};
     return [{
       id,
-      name: String(model.name ?? id),
+      name,
       provider,
       createdAt: created == null ? null : new Date(created * 1000).toISOString(),
       contextLength: nullableNumber(model.context_length),

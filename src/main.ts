@@ -18,14 +18,39 @@ type CatalogModel = {
   id: string;
   name: string;
   provider: "Anthropic" | "OpenAI";
-  createdAt: string | null;
-  contextLength: number | null;
-  inputPriceUsdPerMillionTokens: number | null;
-  outputPriceUsdPerMillionTokens: number | null;
+  createdAt?: string | null;
+  contextLength?: number | null;
+  inputPriceUsdPerMillionTokens?: number | null;
+  outputPriceUsdPerMillionTokens?: number | null;
+  reasoning?: boolean;
+  effort?: string | null;
+  intelligenceIndex?: number | null;
+  indexEstimated?: boolean;
+  taskCostUsd?: number | null;
+  costEfficiency?: number | null;
+  timePerTaskSeconds?: number | null;
+  outputTokensPerSecond?: number | null;
   raw?: Record<string, unknown> | null;
 };
 type ModelCatalog = { source: string; retrievedAt: string; models: CatalogModel[] };
-type ModelStore = { currentCatalog: ModelCatalog | null; previousCatalog: ModelCatalog | null; storage: string };
+type BenchmarkModel = {
+  slug: string;
+  name: string;
+  provider: "Anthropic" | "OpenAI";
+  releaseDate: string | null;
+  reasoning: boolean;
+  effort: string | null;
+  intelligenceIndex: number | null;
+  indexEstimated: boolean;
+  taskCostUsd: number | null;
+  inputPriceUsdPerMillionTokens: number | null;
+  outputPriceUsdPerMillionTokens: number | null;
+  contextWindowTokens: number | null;
+  timePerTaskSeconds: number | null;
+  outputTokensPerSecond: number | null;
+};
+type ModelBaseline = { source: string; sourceUrl: string; retrievedAt: string; models: BenchmarkModel[] };
+type ModelStore = { baseline: ModelBaseline | null; currentCatalog: ModelCatalog | null; previousCatalog: ModelCatalog | null; storage: string };
 
 const root = document.querySelector<HTMLDivElement>("#app")!;
 const modelChartWidth = () => Math.min(900, Math.max(320, window.innerWidth - (window.innerWidth <= 420 ? 64 : window.innerWidth <= 760 ? 76 : window.innerWidth < 1200 ? 124 : 320)));
@@ -67,6 +92,8 @@ let excludedChartModelIds = new Set(Array.isArray(savedFilters.excludedChartMode
 let modelSelectorOpen = false;
 let modelSearchQuery = typeof savedFilters.modelSearchQuery === "string" ? savedFilters.modelSearchQuery.slice(0, 120) : "";
 let modelCatalog: ModelCatalog | null = null;
+let benchmarkModels: CatalogModel[] = [];
+let benchmarkRetrievedAt: string | null = null;
 let modelDataState: "not-loaded" | "loading" | "ready" | "unavailable" = "not-loaded";
 let modelStorePromise: Promise<void> | null = null;
 let modelCatalogDiff: { firstSync: boolean; added: CatalogModel[]; removed: CatalogModel[]; changed: { model: CatalogModel; field: string; before: string; after: string }[] } | null = null;
@@ -106,10 +133,12 @@ const formatTokens = (value: number | null | undefined) => value == null || !Num
 function compareModelCatalog(previous: ModelCatalog | null, current: ModelCatalog) {
   if (!previous) return { firstSync: true, added: [], removed: [], changed: [] };
 
-  const oldById = new Map(previous.models.map((model) => [model.id.toLowerCase(), model]));
-  const currentById = new Map(current.models.map((model) => [model.id.toLowerCase(), model]));
-  const added = current.models.filter((model) => !oldById.has(model.id.toLowerCase()));
-  const removed = previous.models.filter((model) => !currentById.has(model.id.toLowerCase()));
+  const oldModels = filterClientModels(previous.models);
+  const currentModels = filterClientModels(current.models);
+  const oldById = new Map(oldModels.map((model) => [model.id.toLowerCase(), model]));
+  const currentById = new Map(currentModels.map((model) => [model.id.toLowerCase(), model]));
+  const added = currentModels.filter((model) => !oldById.has(model.id.toLowerCase()));
+  const removed = oldModels.filter((model) => !currentById.has(model.id.toLowerCase()));
   const changed: { model: CatalogModel; field: string; before: string; after: string }[] = [];
   const fields: { key: keyof CatalogModel; label: string; format: (value: CatalogModel[keyof CatalogModel]) => string }[] = [
     { key: "name", label: "名称", format: (value) => String(value ?? "—") },
@@ -117,7 +146,7 @@ function compareModelCatalog(previous: ModelCatalog | null, current: ModelCatalo
     { key: "inputPriceUsdPerMillionTokens", label: "输入价 / 百万 token", format: (value) => formatMoney(value as number | null) },
     { key: "outputPriceUsdPerMillionTokens", label: "输出价 / 百万 token", format: (value) => formatMoney(value as number | null) },
   ];
-  current.models.forEach((model) => {
+  currentModels.forEach((model) => {
     const before = oldById.get(model.id.toLowerCase());
     if (!before) return;
     fields.forEach(({ key, label, format }) => {
@@ -130,8 +159,51 @@ function providerLabel(provider: CatalogModel["provider"]) {
   return provider === "Anthropic" ? "Claude" : "GPT";
 }
 
+function filterClientModels(models: CatalogModel[]) {
+  return models.filter((model) => {
+    const [namespace, slug, ...variants] = model.id.toLowerCase().split("/");
+    const name = cleanModelName(model.name);
+    return !variants.length && Boolean(slug) && isTextModel(`${slug ?? ""} ${name}`) && isStandardClientModelSlug(slug ?? "", name) &&
+      ((namespace === "anthropic" && model.provider === "Anthropic") || (namespace === "openai" && model.provider === "OpenAI"));
+  }).map((model) => ({ ...model, name: cleanModelName(model.name) }));
+}
+
+function cleanModelName(value: string) {
+  return value.replace(/&#x([\da-f]+);/gi, (_, hex: string) => {
+    const codePoint = parseInt(hex, 16);
+    return codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : "";
+  }).replace(/&#(\d+);/g, (_, decimal: string) => {
+    const codePoint = Number(decimal);
+    return codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : "";
+  }).replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&").replace(/\*\*/g, "").replace(/\s+/g, " ").trim();
+}
+
+function isTextModel(value: string) {
+  return !/(?:^|[\s/_-])(?:audio|image|video|speech|vision|realtime|transcribe|transcription|tts|whisper|dall[\s-]?e|sora|non[\s_-]*reasoning)(?:$|[\s/_-])/i.test(value);
+}
+
+function isStandardClientModelSlug(slug: string, name = "") {
+  return /^(?:claude|gpt)-/i.test(slug) && !/(?:^|[-_:\s])(?:batch|latest|pro|free|nitro|online|extended|exacto|preview|codex)(?:$|[-_:\s])/i.test(`${slug} ${name}`);
+}
+
+function modelsForRanking() {
+  if (!modelCatalog?.models.length) return benchmarkModels;
+  const benchmarkBySlug = new Map(benchmarkModels.map((model) => [model.id.toLowerCase(), model]));
+  return modelCatalog.models.map((model) => {
+    const slug = model.id.toLowerCase().split("/")[1] ?? model.id.toLowerCase();
+    const benchmark = benchmarkBySlug.get(slug);
+    return benchmark ? { ...model, ...benchmark, id: model.id, name: benchmark.name } : model;
+  });
+}
+
+function modelCostEfficiency(model: CatalogModel) {
+  return model.intelligenceIndex != null && model.taskCostUsd != null && model.taskCostUsd > 0
+    ? model.intelligenceIndex / model.taskCostUsd
+    : null;
+}
+
 function modelsForSelectedProvider() {
-  return (modelCatalog?.models ?? []).filter((model) => selectedModelProvider === "all" || model.provider === selectedModelProvider);
+  return benchmarkModels.filter((model) => selectedModelProvider === "all" || model.provider === selectedModelProvider);
 }
 
 function modelsSelectedForChart() {
@@ -139,11 +211,11 @@ function modelsSelectedForChart() {
 }
 
 function renderPriceScatter(models: CatalogModel[]) {
-  const chartable = models.filter((model) => model.inputPriceUsdPerMillionTokens != null && model.outputPriceUsdPerMillionTokens != null);
+  const chartable = models.filter((model) => model.taskCostUsd != null && model.intelligenceIndex != null);
   if (!chartable.length) {
     const message = modelDataState === "loading"
-      ? "正在载入 Claude 与 GPT 在线目录…"
-      : models.length ? "所选模型缺少完整价格，当前无法绘图。" : "请在上方选择要显示的模型。";
+      ? "正在载入 Claude 与 GPT 评测数据…"
+      : models.length ? "所选模型缺少每任务成本或能力指数，当前无法绘图。" : "请在上方选择要显示的模型。";
     return `<div class="model-chart-empty">${message}</div>`;
   }
 
@@ -156,42 +228,42 @@ function renderPriceScatter(models: CatalogModel[]) {
     const ratio = value / magnitude;
     return (ratio <= 1 ? 1 : ratio <= 2 ? 2 : ratio <= 5 ? 5 : 10) * magnitude;
   };
-  const inputMax = niceMax(Math.max(...chartable.map((model) => model.inputPriceUsdPerMillionTokens ?? 0)));
-  const outputMax = niceMax(Math.max(...chartable.map((model) => model.outputPriceUsdPerMillionTokens ?? 0)));
-  const x = (value: number) => pad.left + (value / inputMax) * (width - pad.left - pad.right);
-  const y = (value: number) => pad.top + ((outputMax - value) / outputMax) * (height - pad.top - pad.bottom);
+  const costMax = niceMax(Math.max(...chartable.map((model) => model.taskCostUsd ?? 0)));
+  const intelligenceMax = niceMax(Math.max(...chartable.map((model) => model.intelligenceIndex ?? 0)));
+  const x = (value: number) => pad.left + (value / costMax) * (width - pad.left - pad.right);
+  const y = (value: number) => pad.top + ((intelligenceMax - value) / intelligenceMax) * (height - pad.top - pad.bottom);
   const ticks = Array.from({ length: 6 }, (_, index) => index / 5);
   const grid = `${ticks.map((ratio) => {
-    const input = inputMax * ratio;
-    const output = outputMax * ratio;
-    return `<line x1="${pad.left}" y1="${y(output)}" x2="${width - pad.right}" y2="${y(output)}" class="model-grid"/><text x="${pad.left - 9}" y="${y(output) + 4}" text-anchor="end" class="model-axis">${formatMoney(output)}</text><line x1="${x(input)}" y1="${pad.top}" x2="${x(input)}" y2="${height - pad.bottom}" class="model-grid model-grid-vertical"/><text x="${x(input)}" y="${height - 17}" text-anchor="middle" class="model-axis">${formatMoney(input)}</text>`;
+    const intelligence = intelligenceMax * ratio;
+    const cost = costMax * ratio;
+    return `<line x1="${pad.left}" y1="${y(intelligence)}" x2="${width - pad.right}" y2="${y(intelligence)}" class="model-grid"/><text x="${pad.left - 9}" y="${y(intelligence) + 4}" text-anchor="end" class="model-axis">${intelligence.toFixed(0)}</text><line x1="${x(cost)}" y1="${pad.top}" x2="${x(cost)}" y2="${height - pad.bottom}" class="model-grid model-grid-vertical"/><text x="${x(cost)}" y="${height - 17}" text-anchor="middle" class="model-axis">${formatMoney(cost)}</text>`;
   }).join("")}`;
 
   const variants = new Map<string, CatalogModel[]>();
   chartable.forEach((model) => {
-    const family = model.id.toLowerCase().replace(/(?::[^:]+)+$/, "");
+    const family = model.id.toLowerCase().replace(/-(?:xhigh|high|medium|low)$/, "");
     variants.set(family, [...(variants.get(family) ?? []), model]);
   });
   const seriesLines = [...variants.values()].filter((family) => family.length > 1).map((family) => {
-    const ordered = [...family].sort((a, b) => (a.inputPriceUsdPerMillionTokens ?? 0) - (b.inputPriceUsdPerMillionTokens ?? 0));
-    const points = ordered.map((model) => `${x(model.inputPriceUsdPerMillionTokens ?? 0)},${y(model.outputPriceUsdPerMillionTokens ?? 0)}`).join(" ");
+    const ordered = [...family].sort((a, b) => (a.taskCostUsd ?? 0) - (b.taskCostUsd ?? 0));
+    const points = ordered.map((model) => `${x(model.taskCostUsd ?? 0)},${y(model.intelligenceIndex ?? 0)}`).join(" ");
     return `<polyline points="${points}" class="model-series-line ${family[0].provider === "Anthropic" ? "anthropic" : "openai"}" aria-hidden="true"/>`;
   }).join("");
-  const dots = chartable.map((model) => `<circle cx="${x(model.inputPriceUsdPerMillionTokens ?? 0)}" cy="${y(model.outputPriceUsdPerMillionTokens ?? 0)}" r="5.5" class="model-dot ${model.provider === "Anthropic" ? "anthropic" : "openai"}" tabindex="0" aria-describedby="model-chart-tooltip" aria-label="${escapeHtml(model.name)}，输入价 ${formatMoney(model.inputPriceUsdPerMillionTokens)}，输出价 ${formatMoney(model.outputPriceUsdPerMillionTokens)}" data-model-id="${escapeHtml(model.id)}"/>`).join("");
+  const dots = chartable.map((model) => `<circle cx="${x(model.taskCostUsd ?? 0)}" cy="${y(model.intelligenceIndex ?? 0)}" r="5.5" class="model-dot ${model.provider === "Anthropic" ? "anthropic" : "openai"}" tabindex="0" aria-describedby="model-chart-tooltip" aria-label="${escapeHtml(model.name)}，每任务成本 ${formatMoney(model.taskCostUsd)}，能力指数 ${model.intelligenceIndex?.toFixed(1)}，性价比 ${modelCostEfficiency(model)?.toFixed(1)}" data-model-id="${escapeHtml(model.id)}"/>`).join("");
   const yAxisLabelX = width <= 420 ? 7 : 16;
-  return `<svg class="model-scatter" viewBox="0 0 ${width} ${height}" role="img" aria-label="Claude 与 GPT 模型输入和输出价格散点图。横轴和纵轴均为线性刻度；同一目录模型的计费变体以线连接。">${grid}${seriesLines}${dots}<text x="${(pad.left + width - pad.right) / 2}" y="${height - 1}" text-anchor="middle" class="model-axis-title">输入价格（美元 / 百万 token）</text><text transform="translate(${yAxisLabelX} ${(height - pad.bottom + pad.top) / 2}) rotate(-90)" text-anchor="middle" class="model-axis-title">输出价格（美元 / 百万 token）</text></svg><div class="model-chart-tooltip" id="model-chart-tooltip" role="tooltip" hidden></div>`;
+  return `<svg class="model-scatter" viewBox="0 0 ${width} ${height}" role="img" aria-label="Claude 与 GPT 模型性价比散点图。横轴为每任务成本，纵轴为 Intelligence Index；两个坐标均为线性刻度，同一模型系列按推理档位连线。">${grid}${seriesLines}${dots}<text x="${(pad.left + width - pad.right) / 2}" y="${height - 1}" text-anchor="middle" class="model-axis-title">每任务成本（美元）</text><text transform="translate(${yAxisLabelX} ${(height - pad.bottom + pad.top) / 2}) rotate(-90)" text-anchor="middle" class="model-axis-title">Intelligence Index（越高越好）</text></svg><div class="model-chart-tooltip" id="model-chart-tooltip" role="tooltip" hidden></div>`;
 }
 
 function bindModelChartInteractions() {
   const card = root.querySelector<HTMLElement>(".model-chart-card");
   const tooltip = card?.querySelector<HTMLElement>(".model-chart-tooltip");
   if (!card || !tooltip) return;
-  const modelsById = new Map((modelCatalog?.models ?? []).map((model) => [model.id, model]));
+  const modelsById = new Map(benchmarkModels.map((model) => [model.id, model]));
   const hideTooltip = () => { tooltip.hidden = true; };
   const showTooltip = (dot: SVGCircleElement) => {
     const model = modelsById.get(dot.dataset.modelId ?? "");
     if (!model) return;
-    tooltip.innerHTML = `<strong class="model-tooltip-title">${escapeHtml(model.name)}</strong><span class="model-tooltip-meta">${providerLabel(model.provider)} · ${escapeHtml(model.id)}</span><span class="model-tooltip-row"><span>输入价 / 百万 token</span><strong>${formatMoney(model.inputPriceUsdPerMillionTokens)}</strong></span><span class="model-tooltip-row"><span>输出价 / 百万 token</span><strong>${formatMoney(model.outputPriceUsdPerMillionTokens)}</strong></span><span class="model-tooltip-row"><span>上下文长度</span><strong>${formatTokens(model.contextLength)}</strong></span><span class="model-tooltip-meta">目录发布日期：${model.createdAt ? escapeHtml(formatDate(model.createdAt)) : "未提供"}</span>`;
+    tooltip.innerHTML = `<strong class="model-tooltip-title">${escapeHtml(model.name)}</strong><span class="model-tooltip-meta">${providerLabel(model.provider)} · ${escapeHtml(model.id)} · ${model.effort ?? "默认推理档"}</span><span class="model-tooltip-row"><span>每任务成本</span><strong>${formatMoney(model.taskCostUsd)}</strong></span><span class="model-tooltip-row"><span>Intelligence Index</span><strong>${model.intelligenceIndex?.toFixed(1) ?? "—"}</strong></span><span class="model-tooltip-row"><span>性价比指数</span><strong>${modelCostEfficiency(model)?.toFixed(2) ?? "—"}</strong></span><span class="model-tooltip-meta">${model.indexEstimated ? "能力指数为估算值" : "能力指数为评测值"}</span>`;
     tooltip.hidden = false;
     const cardRect = card.getBoundingClientRect();
     const dotRect = dot.getBoundingClientRect();
@@ -233,7 +305,7 @@ function refreshModelChart() {
   const card = root.querySelector<HTMLElement>(".model-chart-card");
   if (!card) return;
   const selected = modelsSelectedForChart();
-  card.innerHTML = `${renderPriceScatter(selected)}<div class="model-chart-foot"><span>同一目录模型的计费变体以线连接 · 越靠左下，公开 token 单价越低</span><span>圆点来自 ${selected.length} 个已选模型</span></div>`;
+  card.innerHTML = `${renderPriceScatter(selected)}<div class="model-chart-foot"><span>同一系列按推理档位连线 · 左上角代表更高能力与更低任务成本</span><span>圆点来自 ${selected.length} 个已选模型</span></div>`;
   bindModelChartInteractions();
   updateModelChartSelectionCount();
 }
@@ -277,19 +349,20 @@ function bindModelChoiceInputs() {
 }
 
 function renderModelPage() {
-  const allModels = modelCatalog?.models ?? [];
+  const allModels = modelsForRanking();
   const scope = modelsForSelectedProvider();
   const selected = scope.filter((model) => !excludedChartModelIds.has(model.id.toLowerCase()));
-  const listed = [...scope].sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? "") || a.name.localeCompare(b.name));
+  const listed = allModels.filter((model) => selectedModelProvider === "all" || model.provider === selectedModelProvider)
+    .sort((a, b) => (modelCostEfficiency(b) ?? -1) - (modelCostEfficiency(a) ?? -1));
   const filters = [{ id: "all", label: "全部", accessible: "全部公司" }, { id: "Anthropic", label: "Claude", accessible: "Claude（Anthropic）" }, { id: "OpenAI", label: "GPT", accessible: "GPT（OpenAI）" }]
     .map(({ id, label, accessible }) => `<button type="button" class="model-filter ${selectedModelProvider === id ? "selected" : ""}" data-provider="${id}" aria-label="${accessible}" aria-pressed="${selectedModelProvider === id}">${label}</button>`).join("");
-  const tableRows = listed.map((model) => `<tr><td><strong class="model-name">${escapeHtml(model.name)}</strong><small>${escapeHtml(model.id)}</small></td><td><span class="provider-badge ${model.provider === "Anthropic" ? "anthropic" : "openai"}">${providerLabel(model.provider)}</span></td><td>${model.createdAt ? escapeHtml(formatDate(model.createdAt)) : "—"}</td><td>${formatMoney(model.inputPriceUsdPerMillionTokens)}</td><td>${formatMoney(model.outputPriceUsdPerMillionTokens)}</td><td>${formatTokens(model.contextLength)}</td></tr>`).join("");
-  const mobileCards = listed.map((model) => `<article class="model-mobile-card"><div class="model-mobile-heading"><div><strong>${escapeHtml(model.name)}</strong><small>${escapeHtml(model.id)}</small></div><span class="provider-badge ${model.provider === "Anthropic" ? "anthropic" : "openai"}">${providerLabel(model.provider)}</span></div><div class="model-mobile-stats"><div><span>输入价 / 百万 token</span><strong>${formatMoney(model.inputPriceUsdPerMillionTokens)}</strong></div><div><span>输出价 / 百万 token</span><strong>${formatMoney(model.outputPriceUsdPerMillionTokens)}</strong></div><div><span>上下文</span><strong>${formatTokens(model.contextLength)}</strong></div><div><span>目录发布日期</span><strong>${model.createdAt ? escapeHtml(formatDate(model.createdAt)) : "—"}</strong></div></div></article>`).join("");
+  const tableRows = listed.map((model, index) => `<tr><td><span class="rank-number">${index + 1}</span><strong class="model-name">${escapeHtml(model.name)}</strong><small>${escapeHtml(model.id)} · ${model.intelligenceIndex == null ? "暂无评测" : model.effort ?? "默认推理档"}</small></td><td><span class="provider-badge ${model.provider === "Anthropic" ? "anthropic" : "openai"}">${providerLabel(model.provider)}</span></td><td>${model.intelligenceIndex?.toFixed(1) ?? "—"}</td><td>${formatMoney(model.taskCostUsd)}</td><td class="efficiency-value">${modelCostEfficiency(model)?.toFixed(2) ?? "—"}</td><td>${formatTokens(model.contextLength)}</td></tr>`).join("");
+  const mobileCards = listed.map((model, index) => `<article class="model-mobile-card"><div class="model-mobile-heading"><span class="rank-number">${index + 1}</span><div><strong>${escapeHtml(model.name)}</strong><small>${escapeHtml(model.id)} · ${model.intelligenceIndex == null ? "暂无评测" : model.effort ?? "默认推理档"}</small></div><span class="provider-badge ${model.provider === "Anthropic" ? "anthropic" : "openai"}">${providerLabel(model.provider)}</span></div><div class="model-mobile-stats"><div><span>性价比指数</span><strong class="efficiency-value">${modelCostEfficiency(model)?.toFixed(2) ?? "—"}</strong></div><div><span>每任务成本</span><strong>${formatMoney(model.taskCostUsd)}</strong></div><div><span>Intelligence Index</span><strong>${model.intelligenceIndex?.toFixed(1) ?? "—"}</strong></div><div><span>上下文</span><strong>${formatTokens(model.contextLength)}</strong></div></div></article>`).join("");
   const catalogStatus = modelCatalog
-    ? `目录最近成功同步于 ${formatDate(modelCatalog.retrievedAt)} · 共 ${modelCatalog.models.length} 个模型`
+    ? `目录最近成功同步于 ${formatDate(modelCatalog.retrievedAt)} · 匹配 ${modelCatalog.models.length} 个 Claude / GPT 文本模型`
     : modelDataState === "ready" ? "D1 中尚无在线目录快照；点击更新开始首次同步" : "尚未读取在线目录快照";
   const modelDatabaseStatus = modelDataState === "loading"
-    ? "正在从 Cloudflare D1 读取 Claude 与 GPT 在线目录…"
+    ? "正在从 Cloudflare D1 读取 Claude 与 GPT 文本模型目录…"
     : modelDataState === "ready"
       ? "Cloudflare D1 已连接，在线目录及历史快照已载入"
       : modelDataState === "unavailable"
@@ -297,7 +370,7 @@ function renderModelPage() {
         : "模型目录保存在 Cloudflare D1；打开模型页后自动读取";
   let diffContent = "";
   if (modelCatalogDiff?.firstSync) {
-    diffContent = `<div class="model-diff-note">首次同步已建立在线目录历史起点；后续更新会比较新增、目录未返回及名称、价格、上下文变化。</div>`;
+    diffContent = `<div class="model-diff-note">首次同步已建立 Claude 与 GPT 文本模型目录起点；后续更新会比较新增、目录未返回及名称、价格、上下文变化。</div>`;
   } else if (modelCatalogDiff) {
     const { added, removed, changed } = modelCatalogDiff;
     const changes = [
@@ -307,18 +380,19 @@ function renderModelPage() {
     ];
     diffContent = `${changes.length
       ? `<p class="model-diff-count">发现 ${added.length} 个新增、${removed.length} 个目录未返回、${changed.length} 项字段变化</p><ul class="model-diff-list">${changes.slice(0, 24).join("")}</ul>${changes.length > 24 ? `<p class="model-diff-note">另有 ${changes.length - 24} 项变化未展开。</p>` : ""}<p class="model-diff-note">“目录未返回”表示本次公开聚合目录未列出，不等同于官方下架。</p>`
-      : `<div class="model-diff-note">与上次在线目录相比，名称、上下文长度、输入价格和输出价格均未发现变化。</div>`}`;
+      : `<div class="model-diff-note">与上次在线目录相比，模型名称、上下文长度和公开价格均未发现变化。</div>`}`;
   } else if (modelCatalog) {
     diffContent = `<div class="model-diff-note">已载入上次在线目录。点击更新后会与这份目录逐项比较。</div>`;
   }
   const currentProviderCount = scope.length;
   const selectedCount = selected.length;
+  const listedCount = listed.length;
 
-  return `<section class="model-page-content"><div class="model-intro"><div class="eyebrow"><span class="live-dot"></span> MODEL DIRECTORY <span class="eyebrow-divider">/</span> Claude · GPT</div><div class="section-heading model-title-row"><div><h1>Claude 与 GPT 模型<span class="title-period">.</span></h1><p class="intro-copy">查看两家公司的在线模型、公开价格与上下文信息。</p></div><div class="model-source-chip">${modelCatalog ? "OpenRouter · " + modelCatalog.retrievedAt.slice(0, 10) : "OpenRouter 在线目录"}</div></div><div class="model-method"><span>价格图：横轴输入价格，纵轴输出价格（美元 / 百万 token）</span><span>坐标采用线性刻度，点位间距按价格差值呈现</span><span>悬停或聚焦圆点查看模型信息</span></div></div>
-    <section class="model-controls-panel"><div class="model-control-group"><div class="model-control-label"><strong>公司</strong><span>筛选图表和模型列表</span></div><div class="model-filters" role="group" aria-label="按公司筛选模型">${filters}</div></div><div class="model-control-group"><div class="model-control-label"><strong>图表模型</strong><span id="model-chart-selection-note">图表显示 ${selectedCount} 个模型 · 价格均按线性刻度呈现</span></div><details class="model-selector" id="model-selector" ${modelSelectorOpen ? "open" : ""}><summary><span>选择图表模型</span><span id="model-selector-count">${selectedCount} / ${currentProviderCount} 已选</span></summary><div class="model-selector-body"><label class="model-search"><span>搜索模型名称或 ID</span><input type="search" id="model-selector-search" value="${escapeHtml(modelSearchQuery)}" placeholder="输入关键词筛选" autocomplete="off"></label><div class="model-selection-actions"><button type="button" data-model-selection="all">全选当前公司</button><button type="button" data-model-selection="none">清空当前公司</button></div><div class="model-choice-options" id="model-choice-options">${renderModelChooserOptions(scope)}</div></div></details></div></section>
-    <section class="model-panel"><div class="section-heading"><div><span class="section-kicker">PUBLIC TOKEN PRICING</span><h2>输入价与输出价</h2></div><div class="model-legend"><span><i class="anthropic"></i>Claude</span><span><i class="openai"></i>GPT</span></div></div><div class="model-chart-card">${renderPriceScatter(selected)}<div class="model-chart-foot"><span>同一目录模型的计费变体以线连接 · 越靠左下，公开 token 单价越低</span><span>圆点来自 ${selectedCount} 个已选模型</span></div></div></section>
-    <section class="model-panel model-ranking"><div class="section-heading model-ranking-heading"><div><span class="section-kicker">AVAILABLE MODELS</span><h2>模型列表</h2><p class="model-list-count">显示 ${currentProviderCount} / ${allModels.length} 个在线模型</p></div></div><div class="model-table-wrap"><table class="model-table"><thead><tr><th>模型 / OpenRouter ID</th><th>公司</th><th>目录日期</th><th>输入价<br>/ 百万 token</th><th>输出价<br>/ 百万 token</th><th>上下文<br>token</th></tr></thead><tbody>${tableRows || ("<tr><td colspan=\"6\" class=\"model-table-empty\">" + (modelDataState === "loading" ? "正在读取模型目录…" : "当前筛选下没有模型") + "</td></tr>")}</tbody></table></div><div class="model-mobile-list">${mobileCards || ("<p class=\"model-table-empty\">" + (modelDataState === "loading" ? "正在读取模型目录…" : "当前筛选下没有模型") + "</p>")}</div><p class="model-footnote">在线目录由 OpenRouter 提供，展示其列出的 Anthropic 与 OpenAI 模型及公开价格；目录没有提供能力指数或每任务成本。</p></section>
-    <section class="model-panel model-update-panel"><div class="section-heading model-update-heading"><div><span class="section-kicker">LIVE CATALOG CHECK</span><h2>在线模型目录更新</h2></div><button type="button" class="model-update-button" id="update-model-catalog" ${modelCatalogLoading || modelDataState === "loading" ? "disabled" : ""}>${modelDataState === "loading" ? `<span class="button-spinner"></span>正在读取` : modelCatalogLoading ? `<span class="button-spinner"></span>正在更新` : "↻ 更新目录"}</button></div><p class="catalog-status"><span class="status-signal ${modelDataState === "ready" ? "ok" : "pending"}"></span>${escapeHtml(modelDatabaseStatus)}</p><p class="catalog-status"><span class="status-signal ${modelCatalog ? "ok" : "pending"}"></span>${escapeHtml(catalogStatus)}</p><p class="catalog-disclaimer">更新源：OpenRouter 公开模型目录，筛选 Anthropic 与 OpenAI 发布者。价格、上下文和可用模型以本次聚合目录为准；服务商目录可能随时间调整。</p>${modelCatalogError ? `<div class="data-error model-error" role="alert">${escapeHtml(modelCatalogError.replace(/[。.!?]+$/, ""))}${modelDataState === "ready" ? "。上次成功目录已保留。" : "。在线目录历史当前无法读取。"}</div>` : ""}${modelCatalogDiff ? `<div class="model-diff">${diffContent}</div>` : ""}<p class="model-storage-note">全部在线模型、公开价格、上下文信息和每次同步快照均保存在 Cloudflare D1；更新失败不会覆盖已保存的目录。</p></section>
+  return `<section class="model-page-content"><div class="model-intro"><div class="eyebrow"><span class="live-dot"></span> MODEL DIRECTORY <span class="eyebrow-divider">/</span> Claude · GPT</div><div class="section-heading model-title-row"><div><h1>Claude 与 GPT 模型<span class="title-period">.</span></h1><p class="intro-copy">对比两家模型的评测能力、每任务成本和性价比。</p></div><div class="model-source-chip">${benchmarkRetrievedAt ? `Artificial Analysis · ${escapeHtml(benchmarkRetrievedAt)}` : "正在读取评测基准"}</div></div><div class="model-method"><span>性价比指数 = Intelligence Index ÷ 每任务成本（美元）</span><span>横轴每任务成本，纵轴能力指数，均采用线性刻度</span><span>越靠左上越划算；悬停圆点查看模型具体数据</span></div></div>
+    <section class="model-controls-panel"><div class="model-control-group"><div class="model-control-label"><strong>公司</strong><span>筛选图表和模型列表</span></div><div class="model-filters" role="group" aria-label="按公司筛选模型">${filters}</div></div><div class="model-control-group"><div class="model-control-label"><strong>图表模型</strong><span id="model-chart-selection-note">图表显示 ${selectedCount} 个模型 · 坐标均按线性刻度呈现</span></div><details class="model-selector" id="model-selector" ${modelSelectorOpen ? "open" : ""}><summary><span>选择图表模型</span><span id="model-selector-count">${selectedCount} / ${currentProviderCount} 已选</span></summary><div class="model-selector-body"><label class="model-search"><span>搜索模型名称或 ID</span><input type="search" id="model-selector-search" value="${escapeHtml(modelSearchQuery)}" placeholder="输入关键词筛选" autocomplete="off"></label><div class="model-selection-actions"><button type="button" data-model-selection="all">全选当前公司</button><button type="button" data-model-selection="none">清空当前公司</button></div><div class="model-choice-options" id="model-choice-options">${renderModelChooserOptions(scope)}</div></div></details></div></section>
+    <section class="model-panel"><div class="section-heading"><div><span class="section-kicker">INTELLIGENCE VS TASK COST</span><h2>模型性价比</h2></div><div class="model-legend"><span><i class="anthropic"></i>Claude</span><span><i class="openai"></i>GPT</span></div></div><div class="model-chart-card">${renderPriceScatter(selected)}<div class="model-chart-foot"><span>同一系列按推理档位连线 · 左上角代表更高能力与更低任务成本</span><span>圆点来自 ${selectedCount} 个已选模型</span></div></div></section>
+    <section class="model-panel model-ranking"><div class="section-heading model-ranking-heading"><div><span class="section-kicker">VALUE RANKING</span><h2>性价比与客户端模型</h2><p class="model-list-count">显示 ${listedCount} 个（共 ${allModels.length} 个文本模型）</p></div></div><div class="model-table-wrap"><table class="model-table"><thead><tr><th>模型 / 推理档</th><th>公司</th><th>Intelligence<br>Index</th><th>每任务成本</th><th>性价比指数</th><th>上下文<br>token</th></tr></thead><tbody>${tableRows || ("<tr><td colspan=\"6\" class=\"model-table-empty\">" + (modelDataState === "loading" ? "正在读取模型目录…" : "当前筛选下没有模型") + "</td></tr>")}</tbody></table></div><div class="model-mobile-list">${mobileCards || ("<p class=\"model-table-empty\">" + (modelDataState === "loading" ? "正在读取模型目录…" : "当前筛选下没有模型") + "</p>")}</div><p class="model-footnote">评测能力指数与每任务成本来自 Artificial Analysis。性价比指数为本页计算值，仅对有相同评测口径数据的模型排序；尚无评测的文本模型仍会列出。</p></section>
+    <section class="model-panel model-update-panel"><div class="section-heading model-update-heading"><div><span class="section-kicker">LIVE CATALOG CHECK</span><h2>在线模型目录更新</h2></div><button type="button" class="model-update-button" id="update-model-catalog" ${modelCatalogLoading || modelDataState === "loading" ? "disabled" : ""}>${modelDataState === "loading" ? `<span class="button-spinner"></span>正在读取` : modelCatalogLoading ? `<span class="button-spinner"></span>正在更新` : "↻ 更新目录"}</button></div><p class="catalog-status"><span class="status-signal ${modelDataState === "ready" ? "ok" : "pending"}"></span>${escapeHtml(modelDatabaseStatus)}</p><p class="catalog-status"><span class="status-signal ${modelCatalog ? "ok" : "pending"}"></span>${escapeHtml(catalogStatus)}</p><p class="catalog-disclaimer">更新源：OpenRouter 公开目录，仅保留 Claude、GPT 客户端系列的标准文本模型；图像、语音、视频专用模型以及 batch、latest、Pro、路由和预览变体会被过滤。图表性价比使用 Artificial Analysis 评测数据。</p>${modelCatalogError ? `<div class="data-error model-error" role="alert">${escapeHtml(modelCatalogError.replace(/[。.!?]+$/, ""))}${modelDataState === "ready" ? "。上次成功目录已保留。" : "。在线目录历史当前无法读取。"}</div>` : ""}${modelCatalogDiff ? `<div class="model-diff">${diffContent}</div>` : ""}<p class="model-storage-note">筛选后的在线文本模型、公开价格、上下文信息和同步快照均保存在 Cloudflare D1；更新失败不会覆盖已保存的数据。</p></section>
   </section>`;
 }
 
@@ -326,7 +400,7 @@ function updateModelChartAfterResize() {
   const card = root.querySelector<HTMLElement>(".model-chart-card");
   if (!card || activePage !== "models") return;
   const selected = modelsSelectedForChart();
-  card.innerHTML = `${renderPriceScatter(selected)}<div class="model-chart-foot"><span>同一目录模型的计费变体以线连接 · 越靠左下，公开 token 单价越低</span><span>圆点来自 ${selected.length} 个已选模型</span></div>`;
+  card.innerHTML = `${renderPriceScatter(selected)}<div class="model-chart-foot"><span>同一系列按推理档位连线 · 左上角代表更高能力与更低任务成本</span><span>圆点来自 ${selected.length} 个已选模型</span></div>`;
   bindModelChartInteractions();
 }
 
@@ -562,7 +636,25 @@ function render() {
 }
 
 function applyModelStore(result: ModelStore) {
-  modelCatalog = result.currentCatalog;
+  benchmarkRetrievedAt = result.baseline?.retrievedAt ?? null;
+  benchmarkModels = (result.baseline?.models ?? []).filter((model) => model.reasoning !== false && isTextModel(`${model.slug} ${model.name}`)).map((model) => ({
+    id: model.slug,
+    name: model.name,
+    provider: model.provider,
+    createdAt: model.releaseDate,
+    contextLength: model.contextWindowTokens,
+    inputPriceUsdPerMillionTokens: model.inputPriceUsdPerMillionTokens,
+    outputPriceUsdPerMillionTokens: model.outputPriceUsdPerMillionTokens,
+    reasoning: model.reasoning,
+    effort: model.effort,
+    intelligenceIndex: model.intelligenceIndex,
+    indexEstimated: model.indexEstimated,
+    taskCostUsd: model.taskCostUsd,
+    costEfficiency: model.intelligenceIndex != null && model.taskCostUsd != null && model.taskCostUsd > 0 ? model.intelligenceIndex / model.taskCostUsd : null,
+    timePerTaskSeconds: model.timePerTaskSeconds,
+    outputTokensPerSecond: model.outputTokensPerSecond,
+  }));
+  modelCatalog = result.currentCatalog ? { ...result.currentCatalog, models: filterClientModels(result.currentCatalog.models) } : null;
   modelCatalogDiff = modelCatalog ? compareModelCatalog(result.previousCatalog, modelCatalog) : null;
   modelDataState = "ready";
   modelCatalogError = null;
@@ -584,6 +676,7 @@ async function loadModelStore() {
       if (!result || !(result.currentCatalog == null || Array.isArray(result.currentCatalog.models))) {
         throw new Error("Cloudflare D1 返回的在线目录格式不正确");
       }
+      if (!Array.isArray(result.baseline?.models)) throw new Error("Cloudflare D1 未返回 Artificial Analysis 评测基准");
       applyModelStore(result);
     } catch (error) {
       modelDataState = "unavailable";
