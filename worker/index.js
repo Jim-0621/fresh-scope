@@ -1,5 +1,6 @@
 const MODEL_CATALOG_COOLDOWN_SECONDS = 60;
-const OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models";
+const MODEL_CATALOG_SOURCE = "Artificial Analysis public LLM leaderboard";
+const MODEL_CATALOG_URL = "https://artificialanalysis.ai/zh/leaderboards/models";
 
 const json = (data, status = 200, headers = {}) =>
   new Response(JSON.stringify(data), {
@@ -28,6 +29,7 @@ function parseJson(value, fallback) {
 }
 
 function mapCatalogRow(row) {
+  const raw = parseJson(row.raw_json, null);
   return {
     id: row.model_id,
     name: row.name,
@@ -36,8 +38,19 @@ function mapCatalogRow(row) {
     contextLength: nullableNumber(row.context_length),
     inputPriceUsdPerMillionTokens: nullableNumber(row.input_price_usd_per_million_tokens),
     outputPriceUsdPerMillionTokens: nullableNumber(row.output_price_usd_per_million_tokens),
-    raw: parseJson(row.raw_json, null),
+    reasoning: raw?.isReasoning === true,
+    effort: modelEffort(raw?.shortName ?? raw?.name),
+    intelligenceIndex: nullableNumber(raw?.intelligenceIndex),
+    indexEstimated: raw?.intelligenceIndexIsEstimated === true,
+    taskCostUsd: nullableNumber(raw?.intelligenceIndexCostPerTask?.cost?.total),
+    timePerTaskSeconds: nullableNumber(raw?.medianEndToEndResponseTimeSeconds),
+    outputTokensPerSecond: nullableNumber(raw?.medianOutputTokensPerSecond),
+    raw,
   };
+}
+
+function modelEffort(name) {
+  return String(name ?? "").match(/\b(xhigh|high|medium|low|max)\b/i)?.[1].toLowerCase() ?? null;
 }
 
 function isTextClientModel(namespace, slug, name) {
@@ -80,6 +93,113 @@ async function readCatalogSnapshot(db, snapshot) {
   };
 }
 
+function findEmbeddedJsonArray(serialized, key, predicate) {
+  const marker = `"${key}":[`;
+  let offset = 0;
+  while (true) {
+    const markerIndex = serialized.indexOf(marker, offset);
+    if (markerIndex < 0) return null;
+    const start = markerIndex + marker.length - 1;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let index = start; index < serialized.length; index += 1) {
+      const character = serialized[index];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (character === "\\") escaped = true;
+        else if (character === '"') inString = false;
+        continue;
+      }
+      if (character === '"') inString = true;
+      else if (character === "[") depth += 1;
+      else if (character === "]") {
+        depth -= 1;
+        if (depth === 0) {
+          try {
+            const value = JSON.parse(serialized.slice(start, index + 1));
+            if (Array.isArray(value) && predicate(value)) return value;
+          } catch {
+            // Continue searching if this is another RSC field with the same name.
+          }
+          break;
+        }
+      }
+    }
+    offset = markerIndex + marker.length;
+  }
+}
+
+function extractArtificialAnalysisModels(html) {
+  const chunks = [...html.matchAll(/<script[^>]*>self\.__next_f\.push\(\[1,"((?:\\.|[^"\\])*)"\]\)<\/script>/g)]
+    .map((match) => JSON.parse(`"${match[1]}"`));
+  if (!chunks.length) throw new Error("Artificial Analysis 未返回可识别的排行榜数据。");
+  const serialized = chunks.join("");
+  const sourceModels = findEmbeddedJsonArray(serialized, "models", (rows) =>
+    rows.length > 0 && typeof rows[0]?.modelCreatorName === "string" && "intelligenceIndex" in rows[0]);
+  const modelIdentities = findEmbeddedJsonArray(serialized, "models", (rows) =>
+    rows.length > 0 && typeof rows[0]?.releaseSlug === "string");
+  const releases = findEmbeddedJsonArray(serialized, "releases", (rows) =>
+    rows.length > 0 && typeof rows[0]?.releaseDate === "string" && rows[0]?.creator);
+  if (!sourceModels || !modelIdentities || !releases) {
+    throw new Error("Artificial Analysis 排行榜结构已变化，无法读取完整模型数据。");
+  }
+
+  const releaseSlugByModelSlug = new Map(modelIdentities.map((model) => [model.slug, model.releaseSlug]));
+  const releaseDateBySlug = new Map(releases.map((release) => [release.slug, release.releaseDate]));
+  return sourceModels.flatMap((model) => {
+    const slug = String(model.slug ?? "").toLowerCase();
+    const creator = String(model.modelCreatorName ?? "").toLowerCase();
+    const provider = creator === "anthropic" ? "Anthropic" : creator === "openai" ? "OpenAI" : null;
+    const namespace = provider === "Anthropic" ? "anthropic" : provider === "OpenAI" ? "openai" : null;
+    const name = cleanModelName(model.shortName ?? model.name ?? slug);
+    if (!provider || !namespace || !slug || !isTextClientModel(namespace, slug, name)) return [];
+
+    const releaseSlug = releaseSlugByModelSlug.get(slug) ?? slug;
+    return [{
+      id: `${namespace}/${slug}`,
+      name,
+      provider,
+      createdAt: releaseDateBySlug.get(releaseSlug) ?? null,
+      contextLength: nullableNumber(model.contextWindowTokens),
+      inputPriceUsdPerMillionTokens: nullableNumber(model.price1mInputTokens),
+      outputPriceUsdPerMillionTokens: nullableNumber(model.price1mOutputTokens),
+      reasoning: model.isReasoning === true,
+      effort: modelEffort(model.shortName ?? model.name),
+      intelligenceIndex: nullableNumber(model.intelligenceIndex),
+      indexEstimated: model.intelligenceIndexIsEstimated === true,
+      taskCostUsd: nullableNumber(model.intelligenceIndexCostPerTask?.cost?.total),
+      timePerTaskSeconds: nullableNumber(model.medianEndToEndResponseTimeSeconds),
+      outputTokensPerSecond: nullableNumber(model.medianOutputTokensPerSecond),
+      raw: model,
+    }];
+  });
+}
+
+function baselineFromCatalog(catalog) {
+  return {
+    source: catalog.source,
+    sourceUrl: MODEL_CATALOG_URL,
+    retrievedAt: catalog.retrievedAt,
+    models: catalog.models.map((model) => ({
+      slug: String(model.raw?.slug ?? model.id.split("/").at(-1) ?? model.id),
+      name: model.name,
+      provider: model.provider,
+      releaseDate: model.createdAt,
+      reasoning: model.reasoning === true,
+      effort: model.effort,
+      intelligenceIndex: model.intelligenceIndex,
+      indexEstimated: model.indexEstimated === true,
+      taskCostUsd: model.taskCostUsd,
+      inputPriceUsdPerMillionTokens: model.inputPriceUsdPerMillionTokens,
+      outputPriceUsdPerMillionTokens: model.outputPriceUsdPerMillionTokens,
+      contextWindowTokens: model.contextLength,
+      timePerTaskSeconds: model.timePerTaskSeconds,
+      outputTokensPerSecond: model.outputTokensPerSecond,
+    })),
+  };
+}
+
 async function publicModelStore(db, currentSnapshotId = null) {
   const baselineRow = await db
     .prepare("SELECT source, source_url, retrieved_at, models_json FROM model_baseline WHERE id = 1")
@@ -89,18 +209,19 @@ async function publicModelStore(db, currentSnapshotId = null) {
   let previousSnapshot;
   if (currentSnapshotId != null) {
     currentSnapshot = await db
-      .prepare("SELECT id, source, retrieved_at FROM model_catalog_snapshots WHERE id = ?")
-      .bind(currentSnapshotId)
+      .prepare("SELECT id, source, retrieved_at FROM model_catalog_snapshots WHERE id = ? AND source = ?")
+      .bind(currentSnapshotId, MODEL_CATALOG_SOURCE)
       .first();
     previousSnapshot = currentSnapshot
       ? await db
-        .prepare("SELECT id, source, retrieved_at FROM model_catalog_snapshots WHERE id < ? ORDER BY id DESC LIMIT 1")
-        .bind(currentSnapshot.id)
+        .prepare("SELECT id, source, retrieved_at FROM model_catalog_snapshots WHERE id < ? AND source = ? ORDER BY id DESC LIMIT 1")
+        .bind(currentSnapshot.id, MODEL_CATALOG_SOURCE)
         .first()
       : null;
   } else {
     const snapshots = await db
-      .prepare("SELECT id, source, retrieved_at FROM model_catalog_snapshots ORDER BY id DESC LIMIT 2")
+      .prepare("SELECT id, source, retrieved_at FROM model_catalog_snapshots WHERE source = ? ORDER BY id DESC LIMIT 2")
+      .bind(MODEL_CATALOG_SOURCE)
       .all();
     [currentSnapshot, previousSnapshot] = snapshots.results;
   }
@@ -113,54 +234,30 @@ async function publicModelStore(db, currentSnapshotId = null) {
   const baselineModels = Array.isArray(baselineData)
     ? baselineData
     : Array.isArray(baselineData?.models) ? baselineData.models : [];
-  const baseline = baselineRow
+  let baseline = baselineRow
     ? {
       source: baselineRow.source,
-      sourceUrl: baselineRow.source_url,
+      sourceUrl: MODEL_CATALOG_URL,
       retrievedAt: baselineRow.retrieved_at,
       models: baselineModels,
     }
     : null;
+  if (currentCatalog) baseline = baselineFromCatalog(currentCatalog);
 
   return { baseline, currentCatalog, previousCatalog, storage: "cloudflare-d1" };
 }
 
 async function fetchModelCatalog() {
-  const upstream = await fetch(OPENROUTER_MODELS_URL, {
-    headers: {
-      accept: "application/json",
-      "HTTP-Referer": "https://fresh-scope.pages.dev/",
-      "X-Title": "FreshScope",
-    },
-  });
-  if (!upstream.ok) throw new Error(`OpenRouter 模型目录返回 ${upstream.status}。`);
+  const upstream = await fetch(MODEL_CATALOG_URL, { headers: { accept: "text/html" } });
+  if (!upstream.ok) throw new Error(`Artificial Analysis 模型排行榜返回 ${upstream.status}。`);
 
-  const payload = await upstream.json();
-  const models = (Array.isArray(payload.data) ? payload.data : []).flatMap((model) => {
-    const id = String(model.id ?? "");
-    const [namespace, slug, ...variants] = id.toLowerCase().split("/");
-    const name = cleanModelName(model.name ?? id);
-    if (variants.length || !slug || slug.includes(":") || !isTextClientModel(namespace, slug, name)) return [];
-    const provider = namespace === "anthropic" ? "Anthropic" : namespace === "openai" ? "OpenAI" : null;
-    if (!provider) return [];
-    const created = nullableNumber(model.created);
-    const pricing = model.pricing ?? {};
-    return [{
-      id,
-      name,
-      provider,
-      createdAt: created == null ? null : new Date(created * 1000).toISOString(),
-      contextLength: nullableNumber(model.context_length),
-      inputPriceUsdPerMillionTokens: nullableNumber(pricing.prompt) == null ? null : nullableNumber(pricing.prompt) * 1_000_000,
-      outputPriceUsdPerMillionTokens: nullableNumber(pricing.completion) == null ? null : nullableNumber(pricing.completion) * 1_000_000,
-      raw: model,
-    }];
-  }).sort((a, b) => a.provider.localeCompare(b.provider) || (b.createdAt ?? "").localeCompare(a.createdAt ?? "") || a.name.localeCompare(b.name));
+  const models = extractArtificialAnalysisModels(await upstream.text())
+    .sort((a, b) => a.provider.localeCompare(b.provider) || (b.createdAt ?? "").localeCompare(a.createdAt ?? "") || a.name.localeCompare(b.name));
 
   if (!["Anthropic", "OpenAI"].every((provider) => models.some((model) => model.provider === provider))) {
-    throw new Error("公开目录没有同时返回 Anthropic 和 OpenAI 模型，本次未更新快照。");
+    throw new Error("Artificial Analysis 排行榜未同时返回 Anthropic 和 OpenAI 模型，本次未更新快照。");
   }
-  return { source: "OpenRouter public models API", retrievedAt: new Date().toISOString(), models };
+  return { source: MODEL_CATALOG_SOURCE, retrievedAt: new Date().toISOString(), models };
 }
 
 async function reserveModelCatalogSync(db, now) {
