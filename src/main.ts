@@ -249,7 +249,8 @@ function setModelSort(key: ModelSortKey, direction: ModelSortDirection, focusSel
 }
 
 function modelsForSelectedProvider() {
-  return benchmarkModels.filter((model) => selectedModelProvider === "all" || model.provider === selectedModelProvider);
+  const providerModels = benchmarkModels.filter((model) => selectedModelProvider === "all" || model.provider === selectedModelProvider);
+  return modelSeriesForChart(providerModels).flat();
 }
 
 function modelsSelectedForChart() {
@@ -260,18 +261,29 @@ function modelHasScatterData(model: CatalogModel) {
   return model.taskCostUsd != null && model.taskCostUsd > 0 && model.intelligenceIndex != null;
 }
 
+function modelSeriesForChart(models: CatalogModel[]) {
+  const variants = new Map<string, CatalogModel[]>();
+  models.filter(modelHasScatterData).forEach((model) => {
+    const family = model.id.toLowerCase().replace(/-(?:xhigh|high|medium|low)$/, "");
+    variants.set(family, [...(variants.get(family) ?? []), model]);
+  });
+  return [...variants.values()].filter((family) => family.length > 1);
+}
+
 function renderPriceScatter(models: CatalogModel[]) {
-  const chartable = models.filter(modelHasScatterData);
+  const series = modelSeriesForChart(models);
+  const chartable = series.flat();
   if (!chartable.length) {
     const message = modelDataState === "loading"
       ? "正在载入 Claude 与 GPT 评测数据…"
-      : models.length ? "对数横轴无法显示 0 成本模型；所选模型还需有能力指数才能绘图。" : "请在上方选择要显示的模型。";
+      : models.length ? "请至少选择同一系列中两个有能力指数和任务成本的模型。" : "请在上方选择要显示的模型。";
     return `<div class="model-chart-empty">${message}</div>`;
   }
 
   const width = modelChartWidth();
-  const height = 330;
-  const pad = { top: 24, right: 24, bottom: 52, left: width <= 420 ? 58 : 68 };
+  const compact = window.innerWidth <= 760;
+  const height = compact ? 360 : 330;
+  const pad = { top: 24, right: 24, bottom: compact ? 80 : 52, left: width <= 420 ? 58 : 68 };
   const costs = chartable.map((model) => model.taskCostUsd!);
   const minCost = Math.min(...costs);
   const maxCost = Math.max(...costs);
@@ -279,16 +291,16 @@ function renderPriceScatter(models: CatalogModel[]) {
   const costPadding = Math.max(costLogRange * 0.06, 0.15);
   const xLogMin = Math.log10(minCost) - costPadding;
   const xLogMax = Math.log10(maxCost) + costPadding;
-  const niceMax = (value: number) => {
-    if (value <= 0) return 1;
-    const magnitude = 10 ** Math.floor(Math.log10(value));
-    const ratio = value / magnitude;
-    return (ratio <= 1 ? 1 : ratio <= 2 ? 2 : ratio <= 5 ? 5 : 10) * magnitude;
-  };
-  const intelligenceMax = niceMax(Math.max(...chartable.map((model) => model.intelligenceIndex ?? 0)));
+  const intelligenceValues = chartable.map((model) => model.intelligenceIndex!);
+  const minIntelligence = Math.min(...intelligenceValues);
+  const maxIntelligence = Math.max(...intelligenceValues);
+  const intelligencePadding = Math.max((maxIntelligence - minIntelligence) * 0.08, 1);
+  const yMin = Math.floor(minIntelligence - intelligencePadding);
+  const yMax = Math.ceil(maxIntelligence + intelligencePadding);
   const x = (value: number) => pad.left + ((Math.log10(value) - xLogMin) / (xLogMax - xLogMin)) * (width - pad.left - pad.right);
-  const y = (value: number) => pad.top + ((intelligenceMax - value) / intelligenceMax) * (height - pad.top - pad.bottom);
-  const yTicks = Array.from({ length: 6 }, (_, index) => index / 5);
+  const y = (value: number) => pad.top + ((yMax - value) / (yMax - yMin)) * (height - pad.top - pad.bottom);
+  const yTicks = Array.from({ length: 5 }, (_, index) => yMin + ((yMax - yMin) * index) / 4);
+  const yTickDecimals = yMax - yMin < 8 ? 1 : 0;
   const xTickMultipliers = width <= 420 || xLogMax - xLogMin > 3 ? [1] : [1, 2, 5];
   const xTickLogs: number[] = [];
   for (let exponent = Math.floor(xLogMin); exponent <= Math.ceil(xLogMax); exponent++) {
@@ -301,27 +313,21 @@ function renderPriceScatter(models: CatalogModel[]) {
     xTickLogs.unshift(xLogMin);
     xTickLogs.push(xLogMax);
   }
-  const grid = `${yTicks.map((ratio) => {
-    const intelligence = intelligenceMax * ratio;
-    return `<line x1="${pad.left}" y1="${y(intelligence)}" x2="${width - pad.right}" y2="${y(intelligence)}" class="model-grid"/><text x="${pad.left - 9}" y="${y(intelligence) + 4}" text-anchor="end" class="model-axis">${intelligence.toFixed(0)}</text>`;
+  const grid = `${yTicks.map((intelligence) => {
+    return `<line x1="${pad.left}" y1="${y(intelligence)}" x2="${width - pad.right}" y2="${y(intelligence)}" class="model-grid"/><text x="${pad.left - 9}" y="${y(intelligence) + 4}" text-anchor="end" class="model-axis">${intelligence.toFixed(yTickDecimals)}</text>`;
   }).join("")}${xTickLogs.map((logValue) => {
     const cost = 10 ** logValue;
-    return `<line x1="${x(cost)}" y1="${pad.top}" x2="${x(cost)}" y2="${height - pad.bottom}" class="model-grid model-grid-vertical"/><text x="${x(cost)}" y="${height - 17}" text-anchor="middle" class="model-axis">${formatMoney(cost)}</text>`;
+    return `<line x1="${x(cost)}" y1="${pad.top}" x2="${x(cost)}" y2="${height - pad.bottom}" class="model-grid model-grid-vertical"/><text x="${x(cost)}" y="${height - (compact ? 46 : 17)}" text-anchor="middle" class="model-axis">${formatMoney(cost)}</text>`;
   }).join("")}`;
 
-  const variants = new Map<string, CatalogModel[]>();
-  chartable.forEach((model) => {
-    const family = model.id.toLowerCase().replace(/-(?:xhigh|high|medium|low)$/, "");
-    variants.set(family, [...(variants.get(family) ?? []), model]);
-  });
-  const seriesLines = [...variants.values()].filter((family) => family.length > 1).map((family) => {
+  const seriesLines = series.map((family) => {
     const ordered = [...family].sort((a, b) => (a.taskCostUsd ?? 0) - (b.taskCostUsd ?? 0));
     const points = ordered.map((model) => `${x(model.taskCostUsd ?? 0)},${y(model.intelligenceIndex ?? 0)}`).join(" ");
     return `<polyline points="${points}" class="model-series-line ${family[0].provider === "Anthropic" ? "anthropic" : "openai"}" aria-hidden="true"/>`;
   }).join("");
   const dots = chartable.map((model) => `<circle cx="${x(model.taskCostUsd ?? 0)}" cy="${y(model.intelligenceIndex ?? 0)}" r="5.5" class="model-dot ${model.provider === "Anthropic" ? "anthropic" : "openai"}" tabindex="0" aria-describedby="model-chart-tooltip" aria-label="${escapeHtml(model.name)}，每任务成本 ${formatMoney(model.taskCostUsd)}，能力指数 ${model.intelligenceIndex?.toFixed(1)}，性价比 ${modelCostEfficiency(model)?.toFixed(1)}" data-model-id="${escapeHtml(model.id)}"/>`).join("");
   const yAxisLabelX = width <= 420 ? 7 : 16;
-  return `<svg class="model-scatter" viewBox="0 0 ${width} ${height}" role="img" aria-label="Claude 与 GPT 模型性价比散点图。横轴为每任务成本对数刻度，纵轴为 Intelligence Index 线性刻度；同一模型系列按推理档位连线。">${grid}${seriesLines}${dots}<text x="${(pad.left + width - pad.right) / 2}" y="${height - 1}" text-anchor="middle" class="model-axis-title">每任务成本（美元，对数刻度）</text><text transform="translate(${yAxisLabelX} ${(height - pad.bottom + pad.top) / 2}) rotate(-90)" text-anchor="middle" class="model-axis-title">Intelligence Index（越高越好）</text></svg><div class="model-chart-tooltip" id="model-chart-tooltip" role="tooltip" hidden></div>`;
+  return `<svg class="model-scatter" viewBox="0 0 ${width} ${height}" role="img" aria-label="Claude 与 GPT 模型性价比图。横轴为每任务成本对数刻度，纵轴按当前系列的 Intelligence Index 数据范围显示；仅显示至少两个有效模型的系列。">${grid}${seriesLines}${dots}<text x="${(pad.left + width - pad.right) / 2}" y="${height - (compact ? 7 : 1)}" text-anchor="middle" class="model-axis-title">每任务成本（美元，对数刻度）</text><text transform="translate(${yAxisLabelX} ${(height - pad.bottom + pad.top) / 2}) rotate(-90)" text-anchor="middle" class="model-axis-title">Intelligence Index（越高越好）</text></svg><div class="model-chart-tooltip" id="model-chart-tooltip" role="tooltip" hidden></div>`;
 }
 
 function bindModelChartInteractions() {
@@ -364,19 +370,21 @@ function renderModelChooserOptions(models: CatalogModel[]) {
 
 function updateModelChartSelectionCount() {
   const scope = modelsForSelectedProvider();
-  const selectedCount = scope.filter((model) => !excludedChartModelIds.has(model.id.toLowerCase())).length;
+  const selected = scope.filter((model) => !excludedChartModelIds.has(model.id.toLowerCase()));
+  const selectedCount = selected.length;
+  const plottedCount = modelSeriesForChart(selected).flat().length;
   const count = root.querySelector<HTMLElement>("#model-selector-count");
   const note = root.querySelector<HTMLElement>("#model-chart-selection-note");
   if (count) count.textContent = `${selectedCount} / ${scope.length} 已选`;
-  if (note) note.textContent = `已选 ${selectedCount} 个模型 · 横轴对数、纵轴线性`;
+  if (note) note.textContent = `已选 ${selectedCount} 个系列模型 · 图中 ${plottedCount} 个`;
 }
 
 function refreshModelChart() {
   const card = root.querySelector<HTMLElement>(".model-chart-card");
   if (!card) return;
   const selected = modelsSelectedForChart();
-  const plottedCount = selected.filter(modelHasScatterData).length;
-  card.innerHTML = `${renderPriceScatter(selected)}<div class="model-chart-foot"><span>同一系列按推理档位连线 · 左上角代表更高能力与更低任务成本</span><span>圆点来自 ${plottedCount} 个可绘制模型</span></div>`;
+  const plottedCount = modelSeriesForChart(selected).flat().length;
+  card.innerHTML = `${renderPriceScatter(selected)}<div class="model-chart-foot"><span>仅显示至少两个有效模型的系列 · 左上角代表更高能力与更低任务成本</span><span>展示 ${plottedCount} 个系列模型</span></div>`;
   bindModelChartInteractions();
   updateModelChartSelectionCount();
 }
@@ -470,12 +478,12 @@ function renderModelPage() {
   }
   const currentProviderCount = scope.length;
   const selectedCount = selected.length;
-  const plottedCount = selected.filter(modelHasScatterData).length;
+  const plottedCount = modelSeriesForChart(selected).flat().length;
   const listedCount = listed.length;
 
-  return `<section class="model-page-content"><div class="model-intro"><div class="eyebrow"><span class="live-dot"></span> MODEL DIRECTORY <span class="eyebrow-divider">/</span> Claude · GPT</div><div class="section-heading model-title-row"><div><h1>Claude 与 GPT 模型<span class="title-period">.</span></h1><p class="intro-copy">对比两家模型的评测能力、每任务成本和性价比。</p></div><div class="model-source-chip">${benchmarkRetrievedAt ? `Artificial Analysis · ${escapeHtml(benchmarkRetrievedAt)}` : "正在读取评测基准"}</div></div><div class="model-method"><span>性价比指数 = Intelligence Index ÷ 每任务成本（美元）</span><span>横轴对数刻度，纵轴能力指数线性刻度</span><span>越靠左上越划算；悬停圆点查看模型具体数据</span></div></div>
-    <section class="model-controls-panel"><div class="model-control-group"><div class="model-control-label"><strong>公司</strong><span>筛选图表和模型列表</span></div><div class="model-filters" role="group" aria-label="按公司筛选模型">${filters}</div></div><div class="model-control-group"><div class="model-control-label"><strong>图表模型</strong><span id="model-chart-selection-note">已选 ${selectedCount} 个模型 · 横轴对数、纵轴线性</span></div><details class="model-selector" id="model-selector" ${modelSelectorOpen ? "open" : ""}><summary><span>选择图表模型</span><span id="model-selector-count">${selectedCount} / ${currentProviderCount} 已选</span></summary><div class="model-selector-body"><label class="model-search"><span>搜索模型名称或 ID</span><input type="search" id="model-selector-search" value="${escapeHtml(modelSearchQuery)}" placeholder="输入关键词筛选" autocomplete="off"></label><div class="model-selection-actions"><button type="button" data-model-selection="all">全选当前公司</button><button type="button" data-model-selection="none">清空当前公司</button></div><div class="model-choice-options" id="model-choice-options">${renderModelChooserOptions(scope)}</div></div></details></div></section>
-    <section class="model-panel"><div class="section-heading"><div><span class="section-kicker">INTELLIGENCE VS TASK COST</span><h2>模型性价比</h2></div><div class="model-legend"><span><i class="anthropic"></i>Claude</span><span><i class="openai"></i>GPT</span></div></div><div class="model-chart-card">${renderPriceScatter(selected)}<div class="model-chart-foot"><span>同一系列按推理档位连线 · 左上角代表更高能力与更低任务成本</span><span>圆点来自 ${plottedCount} 个可绘制模型</span></div></div></section>
+  return `<section class="model-page-content"><div class="model-intro"><div class="eyebrow"><span class="live-dot"></span> MODEL DIRECTORY <span class="eyebrow-divider">/</span> Claude · GPT</div><div class="section-heading model-title-row"><div><h1>Claude 与 GPT 模型<span class="title-period">.</span></h1><p class="intro-copy">对比两家模型的评测能力、每任务成本和性价比。</p></div><div class="model-source-chip">${benchmarkRetrievedAt ? `Artificial Analysis · ${escapeHtml(benchmarkRetrievedAt)}` : "正在读取评测基准"}</div></div><div class="model-method"><span>性价比指数 = Intelligence Index ÷ 每任务成本（美元）</span><span>横轴对数刻度，纵轴随当前系列数据范围变化</span><span>越靠左上越划算；悬停圆点查看模型具体数据</span></div></div>
+    <section class="model-controls-panel"><div class="model-control-group"><div class="model-control-label"><strong>公司</strong><span>筛选图表和模型列表</span></div><div class="model-filters" role="group" aria-label="按公司筛选模型">${filters}</div></div><div class="model-control-group"><div class="model-control-label"><strong>图表模型</strong><span id="model-chart-selection-note">已选 ${selectedCount} 个系列模型 · 图中 ${plottedCount} 个</span></div><details class="model-selector" id="model-selector" ${modelSelectorOpen ? "open" : ""}><summary><span>选择图表模型</span><span id="model-selector-count">${selectedCount} / ${currentProviderCount} 已选</span></summary><div class="model-selector-body"><label class="model-search"><span>搜索模型名称或 ID</span><input type="search" id="model-selector-search" value="${escapeHtml(modelSearchQuery)}" placeholder="输入关键词筛选" autocomplete="off"></label><div class="model-selection-actions"><button type="button" data-model-selection="all">全选当前公司</button><button type="button" data-model-selection="none">清空当前公司</button></div><div class="model-choice-options" id="model-choice-options">${renderModelChooserOptions(scope)}</div></div></details></div></section>
+    <section class="model-panel"><div class="section-heading"><div><span class="section-kicker">INTELLIGENCE VS TASK COST</span><h2>模型性价比</h2></div><div class="model-legend"><span><i class="anthropic"></i>Claude</span><span><i class="openai"></i>GPT</span></div></div><div class="model-chart-card">${renderPriceScatter(selected)}<div class="model-chart-foot"><span>仅显示至少两个有效模型的系列 · 左上角代表更高能力与更低任务成本</span><span>展示 ${plottedCount} 个系列模型</span></div></div></section>
     <section class="model-panel model-ranking"><div class="section-heading model-ranking-heading"><div><span class="section-kicker">VALUE RANKING</span><h2>性价比与客户端模型</h2><p class="model-list-count">显示 ${listedCount} 个（共 ${allModels.length} 个文本模型）</p></div></div><div class="model-table-wrap"><table class="model-table"><thead><tr>${sortHeaders}</tr></thead><tbody>${tableRows || ("<tr><td colspan=\"6\" class=\"model-table-empty\">" + (modelDataState === "loading" ? "正在读取模型目录…" : "当前筛选下没有模型") + "</td></tr>")}</tbody></table></div><div class="model-mobile-sort"><label for="model-sort-field">排序</label><span class="model-sort-select-wrap"><select id="model-sort-field">${mobileSortOptions}</select></span><button type="button" id="model-sort-direction" aria-label="切换排序方向，当前${modelSortDirection === "asc" ? "升序" : "降序"}">${modelSortDirection === "asc" ? "升序 ↑" : "降序 ↓"}</button></div><div class="model-mobile-list">${mobileCards || ("<p class=\"model-table-empty\">" + (modelDataState === "loading" ? "正在读取模型目录…" : "当前筛选下没有模型") + "</p>")}</div><p class="model-footnote">评测能力指数与每任务成本来自 Artificial Analysis。性价比指数为本页计算值；缺少当前排序指标的模型排在末尾，尚无评测的文本模型仍会列出。</p></section>
     <section class="model-panel model-update-panel"><div class="section-heading model-update-heading"><div><span class="section-kicker">LIVE CATALOG CHECK</span><h2>在线模型目录更新</h2></div><button type="button" class="model-update-button" id="update-model-catalog" ${modelCatalogLoading || modelDataState === "loading" ? "disabled" : ""}>${modelDataState === "loading" ? `<span class="button-spinner"></span>正在读取` : modelCatalogLoading ? `<span class="button-spinner"></span>正在更新` : "↻ 更新目录"}</button></div><p class="catalog-status"><span class="status-signal ${modelDataState === "ready" ? "ok" : "pending"}"></span>${escapeHtml(modelDatabaseStatus)}</p><p class="catalog-status"><span class="status-signal ${modelCatalog ? "ok" : "pending"}"></span>${escapeHtml(catalogStatus)}</p><p class="catalog-disclaimer">统一数据源：Artificial Analysis 公开模型排行榜，提供模型目录、能力指数、价格、上下文、每任务成本和输出速度；仅保留 Anthropic Claude 与 OpenAI GPT 的标准文本模型，过滤多模态专用、路由和预览变体。</p>${modelCatalogError ? `<div class="data-error model-error" role="alert">${escapeHtml(modelCatalogError.replace(/[。.!?]+$/, ""))}${modelDataState === "ready" ? "。上次成功目录已保留。" : "。在线目录历史当前无法读取。"}</div>` : ""}${modelCatalogDiff ? `<div class="model-diff">${diffContent}</div>` : ""}<p class="model-storage-note">筛选后的在线文本模型、公开价格、上下文信息和同步快照均保存在 Cloudflare D1；更新失败不会覆盖已保存的数据。</p></section>
   </section>`;
@@ -485,7 +493,8 @@ function updateModelChartAfterResize() {
   const card = root.querySelector<HTMLElement>(".model-chart-card");
   if (!card || activePage !== "models") return;
   const selected = modelsSelectedForChart();
-  card.innerHTML = `${renderPriceScatter(selected)}<div class="model-chart-foot"><span>同一系列按推理档位连线 · 左上角代表更高能力与更低任务成本</span><span>圆点来自 ${selected.length} 个已选模型</span></div>`;
+  const plottedCount = modelSeriesForChart(selected).flat().length;
+  card.innerHTML = `${renderPriceScatter(selected)}<div class="model-chart-foot"><span>仅显示至少两个有效模型的系列 · 左上角代表更高能力与更低任务成本</span><span>展示 ${plottedCount} 个系列模型</span></div>`;
   bindModelChartInteractions();
 }
 
