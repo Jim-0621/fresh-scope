@@ -62,12 +62,17 @@ const chartLayout = () => {
 const firstYear = Number(new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Shanghai", year: "numeric" }).format(new Date())) - 2;
 const firstDate = `${firstYear}-01-01`;
 const availableYears = [String(firstYear + 2), String(firstYear + 1), String(firstYear)];
+const modelSortKeys = ["name", "provider", "intelligence", "cost", "efficiency", "context"] as const;
+type ModelSortKey = (typeof modelSortKeys)[number];
+type ModelSortDirection = "asc" | "desc";
 type FilterPreferences = {
   year: string;
   fuel: "price_92" | "price_95" | "price_0";
   modelProvider: "all" | "Anthropic" | "OpenAI";
   excludedChartModelIds: string[];
   modelSearchQuery: string;
+  modelSortKey: ModelSortKey;
+  modelSortDirection: ModelSortDirection;
 };
 const FILTER_PREFERENCES_KEY = "fresh-scope:filters:v1";
 function readFilterPreferences(): Partial<FilterPreferences> {
@@ -86,6 +91,8 @@ let fuelData: FuelData = { events: [], lastSuccessAt: null };
 let loadError: string | null = null;
 let activePage: "fuel" | "models" = window.location.hash === "#models" ? "models" : "fuel";
 let selectedModelProvider: FilterPreferences["modelProvider"] = savedFilters.modelProvider === "Anthropic" || savedFilters.modelProvider === "OpenAI" ? savedFilters.modelProvider : "all";
+let modelSortKey: ModelSortKey = modelSortKeys.includes(savedFilters.modelSortKey as ModelSortKey) ? savedFilters.modelSortKey! : "efficiency";
+let modelSortDirection: ModelSortDirection = savedFilters.modelSortDirection === "asc" ? "asc" : "desc";
 let excludedChartModelIds = new Set(Array.isArray(savedFilters.excludedChartModelIds)
   ? savedFilters.excludedChartModelIds.filter((id): id is string => typeof id === "string").map((id) => id.toLowerCase())
   : []);
@@ -108,6 +115,8 @@ function saveFilterPreferences() {
       modelProvider: selectedModelProvider,
       excludedChartModelIds: [...excludedChartModelIds],
       modelSearchQuery,
+      modelSortKey,
+      modelSortDirection,
     } satisfies FilterPreferences));
   } catch {
     // Filtering still works when browser storage is unavailable.
@@ -200,6 +209,43 @@ function modelCostEfficiency(model: CatalogModel) {
   return model.intelligenceIndex != null && model.taskCostUsd != null && model.taskCostUsd > 0
     ? model.intelligenceIndex / model.taskCostUsd
     : null;
+}
+
+function defaultModelSortDirection(key: ModelSortKey): ModelSortDirection {
+  return key === "name" || key === "provider" ? "asc" : "desc";
+}
+
+function sortModelsForRanking(models: CatalogModel[]) {
+  const direction = modelSortDirection === "asc" ? 1 : -1;
+  const numericValue = (model: CatalogModel) => {
+    if (modelSortKey === "intelligence") return model.intelligenceIndex;
+    if (modelSortKey === "cost") return model.taskCostUsd;
+    if (modelSortKey === "efficiency") return modelCostEfficiency(model);
+    return model.contextLength;
+  };
+  return models.sort((a, b) => {
+    let comparison = 0;
+    if (modelSortKey === "name" || modelSortKey === "provider") {
+      const first = modelSortKey === "name" ? a.name : a.provider;
+      const second = modelSortKey === "name" ? b.name : b.provider;
+      comparison = first.localeCompare(second, "en", { numeric: true, sensitivity: "base" });
+    } else {
+      const first = numericValue(a);
+      const second = numericValue(b);
+      if (first == null) return second == null ? a.name.localeCompare(b.name, "en") : 1;
+      if (second == null) return -1;
+      comparison = first - second;
+    }
+    return comparison * direction || a.name.localeCompare(b.name, "en", { numeric: true }) || a.id.localeCompare(b.id, "en");
+  });
+}
+
+function setModelSort(key: ModelSortKey, direction: ModelSortDirection, focusSelector: string) {
+  modelSortKey = key;
+  modelSortDirection = direction;
+  saveFilterPreferences();
+  render();
+  root.querySelector<HTMLElement>(focusSelector)?.focus({ preventScroll: true });
 }
 
 function modelsForSelectedProvider() {
@@ -377,8 +423,21 @@ function renderModelPage() {
   const allModels = modelsForRanking();
   const scope = modelsForSelectedProvider();
   const selected = scope.filter((model) => !excludedChartModelIds.has(model.id.toLowerCase()));
-  const listed = allModels.filter((model) => selectedModelProvider === "all" || model.provider === selectedModelProvider)
-    .sort((a, b) => (modelCostEfficiency(b) ?? -1) - (modelCostEfficiency(a) ?? -1));
+  const listed = sortModelsForRanking(allModels.filter((model) => selectedModelProvider === "all" || model.provider === selectedModelProvider));
+  const sortColumns: { key: ModelSortKey; label: string; header: string }[] = [
+    { key: "name", label: "模型 / 推理档", header: "模型 / 推理档" },
+    { key: "provider", label: "公司", header: "公司" },
+    { key: "intelligence", label: "Intelligence Index", header: "Intelligence<br>Index" },
+    { key: "cost", label: "每任务成本", header: "每任务成本" },
+    { key: "efficiency", label: "性价比指数", header: "性价比指数" },
+    { key: "context", label: "上下文 token", header: "上下文<br>token" },
+  ];
+  const sortHeaders = sortColumns.map(({ key, label, header }) => {
+    const active = modelSortKey === key;
+    const nextDirection = active && modelSortDirection === "asc" ? "降序" : active ? "升序" : defaultModelSortDirection(key) === "asc" ? "升序" : "降序";
+    return `<th scope="col" ${active ? `aria-sort="${modelSortDirection === "asc" ? "ascending" : "descending"}"` : ""}><button type="button" class="model-sort-button ${active ? "active" : ""}" data-model-sort="${key}" aria-label="按${label}${nextDirection}排序"><span>${header}</span><span class="model-sort-indicator" aria-hidden="true">${active ? modelSortDirection === "asc" ? "↑" : "↓" : "↕"}</span></button></th>`;
+  }).join("");
+  const mobileSortOptions = sortColumns.map(({ key, label }) => `<option value="${key}" ${modelSortKey === key ? "selected" : ""}>${label}</option>`).join("");
   const filters = [{ id: "all", label: "全部", accessible: "全部公司" }, { id: "Anthropic", label: "Claude", accessible: "Claude（Anthropic）" }, { id: "OpenAI", label: "GPT", accessible: "GPT（OpenAI）" }]
     .map(({ id, label, accessible }) => `<button type="button" class="model-filter ${selectedModelProvider === id ? "selected" : ""}" data-provider="${id}" aria-label="${accessible}" aria-pressed="${selectedModelProvider === id}">${label}</button>`).join("");
   const tableRows = listed.map((model, index) => `<tr><td><span class="rank-number">${index + 1}</span><strong class="model-name">${escapeHtml(model.name)}</strong><small>${escapeHtml(model.id)} · ${model.intelligenceIndex == null ? "暂无评测" : model.effort ?? "默认推理档"}</small></td><td><span class="provider-badge ${model.provider === "Anthropic" ? "anthropic" : "openai"}">${providerLabel(model.provider)}</span></td><td>${model.intelligenceIndex?.toFixed(1) ?? "—"}</td><td>${formatMoney(model.taskCostUsd)}</td><td class="efficiency-value">${modelCostEfficiency(model)?.toFixed(2) ?? "—"}</td><td>${formatTokens(model.contextLength)}</td></tr>`).join("");
@@ -417,7 +476,7 @@ function renderModelPage() {
   return `<section class="model-page-content"><div class="model-intro"><div class="eyebrow"><span class="live-dot"></span> MODEL DIRECTORY <span class="eyebrow-divider">/</span> Claude · GPT</div><div class="section-heading model-title-row"><div><h1>Claude 与 GPT 模型<span class="title-period">.</span></h1><p class="intro-copy">对比两家模型的评测能力、每任务成本和性价比。</p></div><div class="model-source-chip">${benchmarkRetrievedAt ? `Artificial Analysis · ${escapeHtml(benchmarkRetrievedAt)}` : "正在读取评测基准"}</div></div><div class="model-method"><span>性价比指数 = Intelligence Index ÷ 每任务成本（美元）</span><span>横轴对数刻度，纵轴能力指数线性刻度</span><span>越靠左上越划算；悬停圆点查看模型具体数据</span></div></div>
     <section class="model-controls-panel"><div class="model-control-group"><div class="model-control-label"><strong>公司</strong><span>筛选图表和模型列表</span></div><div class="model-filters" role="group" aria-label="按公司筛选模型">${filters}</div></div><div class="model-control-group"><div class="model-control-label"><strong>图表模型</strong><span id="model-chart-selection-note">已选 ${selectedCount} 个模型 · 横轴对数、纵轴线性</span></div><details class="model-selector" id="model-selector" ${modelSelectorOpen ? "open" : ""}><summary><span>选择图表模型</span><span id="model-selector-count">${selectedCount} / ${currentProviderCount} 已选</span></summary><div class="model-selector-body"><label class="model-search"><span>搜索模型名称或 ID</span><input type="search" id="model-selector-search" value="${escapeHtml(modelSearchQuery)}" placeholder="输入关键词筛选" autocomplete="off"></label><div class="model-selection-actions"><button type="button" data-model-selection="all">全选当前公司</button><button type="button" data-model-selection="none">清空当前公司</button></div><div class="model-choice-options" id="model-choice-options">${renderModelChooserOptions(scope)}</div></div></details></div></section>
     <section class="model-panel"><div class="section-heading"><div><span class="section-kicker">INTELLIGENCE VS TASK COST</span><h2>模型性价比</h2></div><div class="model-legend"><span><i class="anthropic"></i>Claude</span><span><i class="openai"></i>GPT</span></div></div><div class="model-chart-card">${renderPriceScatter(selected)}<div class="model-chart-foot"><span>同一系列按推理档位连线 · 左上角代表更高能力与更低任务成本</span><span>圆点来自 ${plottedCount} 个可绘制模型</span></div></div></section>
-    <section class="model-panel model-ranking"><div class="section-heading model-ranking-heading"><div><span class="section-kicker">VALUE RANKING</span><h2>性价比与客户端模型</h2><p class="model-list-count">显示 ${listedCount} 个（共 ${allModels.length} 个文本模型）</p></div></div><div class="model-table-wrap"><table class="model-table"><thead><tr><th>模型 / 推理档</th><th>公司</th><th>Intelligence<br>Index</th><th>每任务成本</th><th>性价比指数</th><th>上下文<br>token</th></tr></thead><tbody>${tableRows || ("<tr><td colspan=\"6\" class=\"model-table-empty\">" + (modelDataState === "loading" ? "正在读取模型目录…" : "当前筛选下没有模型") + "</td></tr>")}</tbody></table></div><div class="model-mobile-list">${mobileCards || ("<p class=\"model-table-empty\">" + (modelDataState === "loading" ? "正在读取模型目录…" : "当前筛选下没有模型") + "</p>")}</div><p class="model-footnote">评测能力指数与每任务成本来自 Artificial Analysis。性价比指数为本页计算值，仅对有相同评测口径数据的模型排序；尚无评测的文本模型仍会列出。</p></section>
+    <section class="model-panel model-ranking"><div class="section-heading model-ranking-heading"><div><span class="section-kicker">VALUE RANKING</span><h2>性价比与客户端模型</h2><p class="model-list-count">显示 ${listedCount} 个（共 ${allModels.length} 个文本模型）</p></div></div><div class="model-table-wrap"><table class="model-table"><thead><tr>${sortHeaders}</tr></thead><tbody>${tableRows || ("<tr><td colspan=\"6\" class=\"model-table-empty\">" + (modelDataState === "loading" ? "正在读取模型目录…" : "当前筛选下没有模型") + "</td></tr>")}</tbody></table></div><div class="model-mobile-sort"><label for="model-sort-field">排序</label><span class="model-sort-select-wrap"><select id="model-sort-field">${mobileSortOptions}</select></span><button type="button" id="model-sort-direction" aria-label="切换排序方向，当前${modelSortDirection === "asc" ? "升序" : "降序"}">${modelSortDirection === "asc" ? "升序 ↑" : "降序 ↓"}</button></div><div class="model-mobile-list">${mobileCards || ("<p class=\"model-table-empty\">" + (modelDataState === "loading" ? "正在读取模型目录…" : "当前筛选下没有模型") + "</p>")}</div><p class="model-footnote">评测能力指数与每任务成本来自 Artificial Analysis。性价比指数为本页计算值；缺少当前排序指标的模型排在末尾，尚无评测的文本模型仍会列出。</p></section>
     <section class="model-panel model-update-panel"><div class="section-heading model-update-heading"><div><span class="section-kicker">LIVE CATALOG CHECK</span><h2>在线模型目录更新</h2></div><button type="button" class="model-update-button" id="update-model-catalog" ${modelCatalogLoading || modelDataState === "loading" ? "disabled" : ""}>${modelDataState === "loading" ? `<span class="button-spinner"></span>正在读取` : modelCatalogLoading ? `<span class="button-spinner"></span>正在更新` : "↻ 更新目录"}</button></div><p class="catalog-status"><span class="status-signal ${modelDataState === "ready" ? "ok" : "pending"}"></span>${escapeHtml(modelDatabaseStatus)}</p><p class="catalog-status"><span class="status-signal ${modelCatalog ? "ok" : "pending"}"></span>${escapeHtml(catalogStatus)}</p><p class="catalog-disclaimer">统一数据源：Artificial Analysis 公开模型排行榜，提供模型目录、能力指数、价格、上下文、每任务成本和输出速度；仅保留 Anthropic Claude 与 OpenAI GPT 的标准文本模型，过滤多模态专用、路由和预览变体。</p>${modelCatalogError ? `<div class="data-error model-error" role="alert">${escapeHtml(modelCatalogError.replace(/[。.!?]+$/, ""))}${modelDataState === "ready" ? "。上次成功目录已保留。" : "。在线目录历史当前无法读取。"}</div>` : ""}${modelCatalogDiff ? `<div class="model-diff">${diffContent}</div>` : ""}<p class="model-storage-note">筛选后的在线文本模型、公开价格、上下文信息和同步快照均保存在 Cloudflare D1；更新失败不会覆盖已保存的数据。</p></section>
   </section>`;
 }
@@ -657,6 +716,18 @@ function render() {
     saveFilterPreferences();
     render();
   }));
+  root.querySelectorAll<HTMLButtonElement>("[data-model-sort]").forEach((button) => button.addEventListener("click", () => {
+    const key = button.dataset.modelSort as ModelSortKey;
+    const direction = key === modelSortKey ? modelSortDirection === "asc" ? "desc" : "asc" : defaultModelSortDirection(key);
+    setModelSort(key, direction, `[data-model-sort="${key}"]`);
+  }));
+  root.querySelector<HTMLSelectElement>("#model-sort-field")?.addEventListener("change", (event) => {
+    const key = (event.currentTarget as HTMLSelectElement).value as ModelSortKey;
+    setModelSort(key, defaultModelSortDirection(key), "#model-sort-field");
+  });
+  root.querySelector<HTMLButtonElement>("#model-sort-direction")?.addEventListener("click", () => {
+    setModelSort(modelSortKey, modelSortDirection === "asc" ? "desc" : "asc", "#model-sort-direction");
+  });
   bindModelDirectoryControls(modelsForSelectedProvider());
   root.querySelector<HTMLButtonElement>("#update-model-catalog")?.addEventListener("click", () => void updateModelCatalog());
 }
