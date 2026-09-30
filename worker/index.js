@@ -20,6 +20,11 @@ function nullableNumber(value) {
   return Number.isFinite(number) ? number : null;
 }
 
+function modelTaskCost(model) {
+  const value = model?.intelligenceIndexCostPerTask;
+  return nullableNumber(value?.cost?.total ?? value);
+}
+
 function parseJson(value, fallback) {
   try {
     return JSON.parse(value);
@@ -42,7 +47,7 @@ function mapCatalogRow(row) {
     effort: modelEffort(raw?.shortName ?? raw?.name),
     intelligenceIndex: nullableNumber(raw?.intelligenceIndex),
     indexEstimated: raw?.intelligenceIndexIsEstimated === true,
-    taskCostUsd: nullableNumber(raw?.intelligenceIndexCostPerTask?.cost?.total),
+    taskCostUsd: modelTaskCost(raw),
     timePerTaskSeconds: nullableNumber(raw?.medianEndToEndResponseTimeSeconds),
     outputTokensPerSecond: nullableNumber(raw?.medianOutputTokensPerSecond),
     raw,
@@ -168,7 +173,7 @@ function extractArtificialAnalysisModels(html) {
       effort: modelEffort(model.shortName ?? model.name),
       intelligenceIndex: nullableNumber(model.intelligenceIndex),
       indexEstimated: model.intelligenceIndexIsEstimated === true,
-      taskCostUsd: nullableNumber(model.intelligenceIndexCostPerTask?.cost?.total),
+      taskCostUsd: modelTaskCost(model),
       timePerTaskSeconds: nullableNumber(model.medianEndToEndResponseTimeSeconds),
       outputTokensPerSecond: nullableNumber(model.medianOutputTokensPerSecond),
       raw: model,
