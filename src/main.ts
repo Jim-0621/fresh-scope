@@ -666,18 +666,43 @@ function render() {
     yearEvents.push(event);
     eventsByYear.set(year, yearEvents);
   });
+  const priceFields = ["price_92", "price_95", "price_0"] as const;
+  const fuelLabels: Record<(typeof priceFields)[number], string> = { price_92: "92 号", price_95: "95 号", price_0: "0 号柴油" };
   const history = [...eventsByYear.entries()].filter(([year]) => year === selectedYear).map(([year, events]) => {
-    const rows = events.map((event) => {
+    const classifiedEvents = events.map((event) => {
       const index = fuelData.events.indexOf(event);
       const previous = fuelData.events.slice(index + 1).find((item) => !item.is_no_change);
-      const deltas = previous ? (["price_92", "price_95", "price_0"] as const)
-        .map((field) => event[field] == null || previous[field] == null ? 0 : Math.sign(Number(event[field]) - Number(previous[field])))
-        .filter((delta) => delta !== 0) : [];
-      const movement = event.is_no_change ? "不作调整" : !previous || deltas.length === 0 ? "价格记录" : deltas.every((delta) => delta > 0) ? "上调" : deltas.every((delta) => delta < 0) ? "下调" : "分品种调整";
+      const deltas: Record<(typeof priceFields)[number], number> | null = previous ? Object.fromEntries(priceFields.map((field) => [field, event[field] == null || previous[field] == null ? 0 : Number((Number(event[field]) - Number(previous[field])).toFixed(2))])) as Record<(typeof priceFields)[number], number> : null;
+      const changedDeltas = deltas ? priceFields.map((field) => deltas[field]).filter((delta) => delta !== 0) : [];
+      const movement = event.is_no_change ? "不作调整" : !previous || changedDeltas.length === 0 ? "价格记录" : changedDeltas.every((delta) => delta > 0) ? "上调" : changedDeltas.every((delta) => delta < 0) ? "下调" : "分品种调整";
+      return { event, deltas, movement };
+    });
+    const increaseCount = classifiedEvents.filter(({ movement }) => movement === "上调").length;
+    const decreaseCount = classifiedEvents.filter(({ movement }) => movement === "下调").length;
+    const noChangeCount = classifiedEvents.filter(({ movement }) => movement === "不作调整").length;
+    const splitCount = classifiedEvents.filter(({ movement }) => movement === "分品种调整").length;
+    const recordCount = classifiedEvents.filter(({ movement }) => movement === "价格记录").length;
+    const totals = Object.fromEntries(priceFields.map((field) => [field, { up: 0, down: 0 }])) as Record<(typeof priceFields)[number], { up: number; down: number }>;
+    classifiedEvents.forEach(({ deltas, event }) => {
+      if (event.is_no_change || !deltas) return;
+      priceFields.forEach((field) => {
+        const delta = deltas[field];
+        if (delta > 0) totals[field].up += delta;
+        if (delta < 0) totals[field].down += Math.abs(delta);
+      });
+    });
+    const rows = classifiedEvents.map(({ event, movement }) => {
       const chipClass = event.is_no_change ? "quiet" : movement === "上调" ? "upward" : movement === "下调" ? "downward" : "active";
       return `<tr><td><span class="date-cell">${event.announced_on}</span>${event.effective_at ? `<span class="effective-cell">${escapeHtml(event.effective_at.slice(0, 16).replace("T", " "))} 生效</span>` : ""}</td><td><span class="event-chip ${chipClass}"><i></i>${movement}</span></td><td>${formatPrice(event.price_92)}</td><td>${formatPrice(event.price_95)}</td><td>${formatPrice(event.price_0)}</td><td><a class="source-link" href="${escapeHtml(event.source_url)}" target="_blank" rel="noreferrer" aria-label="查看 ${event.announced_on} 官方公告">↗</a></td></tr>`;
     }).join("");
-    return `<section class="history-year"><div class="history-year-heading"><h3>${escapeHtml(year)} 年</h3><span>${events.length} 条调价记录</span></div><div class="history-card"><div class="table-scroll"><table><thead><tr><th>公告日期 / 生效时间</th><th>事件</th><th>92 号汽油</th><th>95 号汽油</th><th>0 号柴油</th><th>来源</th></tr></thead><tbody>${rows}</tbody></table></div><div class="table-foot"><span><i class="record-dot"></i> 每条价格均可追溯至官方公告</span><span>${year} 年 · 按公告日期倒序</span></div></div></section>`;
+    const summaryRows = (["up", "down"] as const).map((direction) => `<div class="history-summary-row ${direction}"><span>${direction === "up" ? "累计上调" : "累计下调"}</span>${priceFields.map((field) => `<strong><small>${fuelLabels[field]}</small>${direction === "up" ? "+" : "−"}${totals[field][direction].toFixed(2)}</strong>`).join("")}</div>`).join("");
+    const summaryNote = [
+      splitCount ? `另有 ${splitCount} 次分品种调整，对应油品涨跌计入累计` : "",
+      recordCount ? `${recordCount} 条价格记录未归入涨跌或不作调整` : "",
+      "按公告间价差累计，涨跌幅按油品分别统计",
+    ].filter(Boolean).join("；");
+    const summary = `<div class="history-summary" aria-label="${year} 年调价汇总"><div class="history-summary-counts"><div><span>上调</span><strong>${increaseCount} 次</strong></div><div><span>下调</span><strong>${decreaseCount} 次</strong></div><div><span>不作调整</span><strong>${noChangeCount} 次</strong></div></div><div class="history-summary-table"><div class="history-summary-row history-summary-head"><span>年度累计（元 / 升）</span>${priceFields.map((field) => `<span>${fuelLabels[field]}</span>`).join("")}</div>${summaryRows}</div><p class="history-summary-note">${summaryNote}</p></div>`;
+    return `<section class="history-year"><div class="history-year-heading"><h3>${escapeHtml(year)} 年</h3><span>${events.length} 条调价记录</span></div>${summary}<div class="history-card"><div class="table-scroll"><table><thead><tr><th>公告日期 / 生效时间</th><th>事件</th><th>92 号汽油</th><th>95 号汽油</th><th>0 号柴油</th><th>来源</th></tr></thead><tbody>${rows}</tbody></table></div><div class="table-foot"><span><i class="record-dot"></i> 每条价格均可追溯至官方公告</span><span>${year} 年 · 按公告日期倒序</span></div></div></section>`;
   }).join("");
   const yearEvents = eventsByYear.get(selectedYear) ?? [];
   const yearPrice = yearEvents.find((event) => event[selectedFuel] != null)?.[selectedFuel] ?? null;

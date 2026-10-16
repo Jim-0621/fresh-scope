@@ -253,6 +253,18 @@ footer { display: flex; align-items: center; gap: 18px; margin-top: 53px; min-he
 .history-year-heading span { border: 1px solid #e6ebe5; border-radius: 20px; padding: 5px 9px; color: #77867b; background: #f8faf7; font-size: 9px; }
 .history-year .history-card { margin-top: 0; }
 .history-year .table-foot { color: #829087; }
+.history-summary { margin: 0 0 12px; border: 1px solid #e6ebe5; border-radius: 9px; padding: 12px 16px 10px; background: #fbfcfa; }
+.history-summary-counts { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); }
+.history-summary-counts>div { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 0 18px; border-right: 1px solid #e8ede8; color: #748279; font-size: 13px; }
+.history-summary-counts>div:first-child { padding-left: 0; }.history-summary-counts>div:last-child { padding-right: 0; border-right: 0; }
+.history-summary-counts strong { color: #35483d; font-family: "DM Mono",monospace; font-size: 15px; font-variant-numeric: tabular-nums; }
+.history-summary-table { margin-top: 11px; border-top: 1px solid #e9ede8; padding-top: 9px; }
+.history-summary-row { display: grid; grid-template-columns: minmax(112px,1.35fr) repeat(3,minmax(0,1fr)); align-items: center; gap: 8px; padding: 5px 0; color: #6c7a71; font-size: 12px; }
+.history-summary-row>span:not(:first-child) { color: #8a968d; text-align: center; font-size: 11px; }
+.history-summary-row>strong { display: flex; align-items: center; justify-content: center; gap: 6px; color: #4b7959; font-family: "DM Mono",monospace; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.history-summary-row>strong small { display: none; }.history-summary-row.down>strong { color: #b66c4c; }
+.history-summary-head { padding-bottom: 3px; color: #909b93; font-size: 11px; }
+.history-summary-note { margin-top: 5px; color: #909b93; font-size: 11px; line-height: 1.5; }
 .history-empty { display: flex; min-height: 145px; flex-direction: column; align-items: center; justify-content: center; gap: 7px; border: 1px dashed #dfe7df; border-radius: 10px; color: #65776b; background: #fbfcfa; font-size: 12px; }
 .history-empty small { color: #9aa49d; font-size: 10px; }
 @media (max-width: 760px) {
@@ -260,6 +272,13 @@ footer { display: flex; align-items: center; gap: 18px; margin-top: 53px; min-he
   .chart-empty { min-height: 250px; }
   .history-year-heading h3 { font-size: 15px; }
   .history-years { gap: 15px; }
+  .history-summary { padding: 11px 12px 9px; }
+  .history-summary-counts>div { align-items: flex-start; flex-direction: column; gap: 2px; padding: 0 9px; font-size: 12px; }
+  .history-summary-counts strong { font-size: 14px; }
+  .history-summary-row { grid-template-columns: minmax(82px,1.1fr) repeat(3,minmax(0,1fr)); gap: 3px; font-size: 11px; }
+  .history-summary-row>strong { font-size: 12px; }
+  .history-summary-row>span:not(:first-child) { font-size: 10px; }
+  .history-summary-note { font-size: 10px; }
 }
 
 .chart-guide-line { fill: none; pointer-events: none; vector-effect: non-scaling-stroke; }
