@@ -99,12 +99,15 @@ async function readCatalogSnapshot(db, snapshot) {
 }
 
 function findEmbeddedJsonArray(serialized, key, predicate) {
-  const marker = `"${key}":[`;
+  const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const markerPattern = new RegExp(`"${escapedKey}"\\s*:\\s*\\[`, "g");
   let offset = 0;
   while (true) {
-    const markerIndex = serialized.indexOf(marker, offset);
-    if (markerIndex < 0) return null;
-    const start = markerIndex + marker.length - 1;
+    markerPattern.lastIndex = offset;
+    const marker = markerPattern.exec(serialized);
+    if (!marker) return null;
+    const markerIndex = marker.index;
+    const start = markerPattern.lastIndex - 1;
     let depth = 0;
     let inString = false;
     let escaped = false;
@@ -131,7 +134,7 @@ function findEmbeddedJsonArray(serialized, key, predicate) {
         }
       }
     }
-    offset = markerIndex + marker.length;
+    offset = markerPattern.lastIndex;
   }
 }
 
@@ -140,22 +143,25 @@ function extractArtificialAnalysisModels(html) {
     .map((match) => JSON.parse(`"${match[1]}"`));
   if (!chunks.length) throw new Error("Artificial Analysis 未返回可识别的排行榜数据。");
   const serialized = chunks.join("");
-  const sourceModels = findEmbeddedJsonArray(serialized, "models", (rows) =>
-    rows.length > 0 && typeof rows[0]?.modelCreatorName === "string" && "intelligenceIndex" in rows[0]);
+  const sourceModels = findEmbeddedJsonArray(serialized, "models", (rows) => rows.some((model) => {
+    if (!model || typeof model !== "object" || typeof model.slug !== "string") return false;
+    const creator = String(model.modelCreatorName ?? model.creatorName ?? model.creator?.name ?? model.provider?.name ?? model.provider ?? "").toLowerCase();
+    return "intelligenceIndex" in model && (creator.includes("anthropic") || creator.includes("openai") || /^(?:claude|gpt)-/i.test(model.slug));
+  }));
   const modelIdentities = findEmbeddedJsonArray(serialized, "models", (rows) =>
-    rows.length > 0 && typeof rows[0]?.releaseSlug === "string");
+    rows.some((model) => model && typeof model.slug === "string" && typeof model.releaseSlug === "string"));
   const releases = findEmbeddedJsonArray(serialized, "releases", (rows) =>
-    rows.length > 0 && typeof rows[0]?.releaseDate === "string" && rows[0]?.creator);
-  if (!sourceModels || !modelIdentities || !releases) {
-    throw new Error("Artificial Analysis 排行榜结构已变化，无法读取完整模型数据。");
-  }
+    rows.some((release) => release && typeof (release.releaseDate ?? release.date) === "string" && (release.creator || release.modelCreatorName)));
+  if (!sourceModels) throw new Error("Artificial Analysis 排行榜中未找到包含模型能力指数的模型列表。");
 
-  const releaseSlugByModelSlug = new Map(modelIdentities.map((model) => [model.slug, model.releaseSlug]));
-  const releaseDateBySlug = new Map(releases.map((release) => [release.slug, release.releaseDate]));
+  const releaseSlugByModelSlug = new Map((modelIdentities ?? []).map((model) => [model.slug, model.releaseSlug]));
+  const releaseDateBySlug = new Map((releases ?? []).map((release) => [release.slug, release.releaseDate ?? release.date]));
   return sourceModels.flatMap((model) => {
     const slug = String(model.slug ?? "").toLowerCase();
-    const creator = String(model.modelCreatorName ?? "").toLowerCase();
-    const provider = creator === "anthropic" ? "Anthropic" : creator === "openai" ? "OpenAI" : null;
+    const creator = String(model.modelCreatorName ?? model.creatorName ?? model.creator?.name ?? model.provider?.name ?? model.provider ?? "").toLowerCase();
+    const provider = creator.includes("anthropic") || /^claude-/i.test(slug)
+      ? "Anthropic"
+      : creator.includes("openai") || /^gpt-/i.test(slug) ? "OpenAI" : null;
     const namespace = provider === "Anthropic" ? "anthropic" : provider === "OpenAI" ? "openai" : null;
     const name = cleanModelName(model.shortName ?? model.name ?? slug);
     if (!provider || !namespace || !slug || !isTextClientModel(namespace, slug, name)) return [];
@@ -165,7 +171,7 @@ function extractArtificialAnalysisModels(html) {
       id: `${namespace}/${slug}`,
       name,
       provider,
-      createdAt: releaseDateBySlug.get(releaseSlug) ?? null,
+      createdAt: releaseDateBySlug.get(releaseSlug) ?? model.releaseDate ?? model.release?.releaseDate ?? null,
       contextLength: nullableNumber(model.contextWindowTokens),
       inputPriceUsdPerMillionTokens: nullableNumber(model.price1mInputTokens),
       outputPriceUsdPerMillionTokens: nullableNumber(model.price1mOutputTokens),
