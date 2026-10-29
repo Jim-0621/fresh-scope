@@ -143,11 +143,13 @@ function extractArtificialAnalysisModels(html) {
     .map((match) => JSON.parse(`"${match[1]}"`));
   if (!chunks.length) throw new Error("Artificial Analysis 未返回可识别的排行榜数据。");
   const serialized = chunks.join("");
-  const sourceModels = findEmbeddedJsonArray(serialized, "models", (rows) => rows.some((model) => {
+  const isLeaderboardModelArray = (rows) => rows.some((model) => {
     if (!model || typeof model !== "object" || typeof model.slug !== "string") return false;
     const creator = String(model.modelCreatorName ?? model.creatorName ?? model.creator?.name ?? model.provider?.name ?? model.provider ?? "").toLowerCase();
     return "intelligenceIndex" in model && (creator.includes("anthropic") || creator.includes("openai") || /^(?:claude|gpt)-/i.test(model.slug));
-  }));
+  });
+  const sourceModels = findEmbeddedJsonArray(serialized, "initialModels", isLeaderboardModelArray)
+    ?? findEmbeddedJsonArray(serialized, "models", isLeaderboardModelArray);
   const modelIdentities = findEmbeddedJsonArray(serialized, "models", (rows) =>
     rows.some((model) => model && typeof model.slug === "string" && typeof model.releaseSlug === "string"));
   const releases = findEmbeddedJsonArray(serialized, "releases", (rows) =>
