@@ -111,6 +111,13 @@ footer { display: flex; align-items: center; gap: 18px; margin-top: 53px; min-he
 .model-chart-empty { display: grid; min-height: 210px; place-items: center; color: #89958c; }
 .model-ranking { margin-top: 43px; }
 .model-ranking-heading { align-items: center; }
+.model-intelligence-filter { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; margin-top: 16px; padding: 13px; border: 1px solid #e4ebe4; border-radius: 9px; color: #556b5d; background: #f0f4ef; font-size: 12px; }
+.model-intelligence-filter input { appearance: textfield; width: 100px; min-height: 40px; border: 1px solid #dce5dc; border-radius: 7px; padding: 0 10px; color: #35483d; background: #fff; font: inherit; }
+.model-intelligence-filter input::-webkit-inner-spin-button,.model-intelligence-filter input::-webkit-outer-spin-button { appearance: none; margin: 0; }
+.model-intelligence-filter button { appearance: none; min-height: 40px; border: 1px solid #cdddcf; border-radius: 7px; padding: 0 13px; color: #315c44; background: #fff; font: inherit; cursor: pointer; }
+.model-intelligence-filter button:hover { background: #e6f0e7; }
+.model-intelligence-filter input:focus-visible,.model-intelligence-filter button:focus-visible { outline: 3px solid #a8cbb2; outline-offset: 2px; }
+.model-intelligence-filter > span { flex-basis: 100%; color: #849187; font-size: 11px; }
 .model-filters { display: inline-flex; gap: 4px; padding: 4px; border: 1px solid #e4ebe4; border-radius: 9px; background: #edf2ed; }
 .model-filter { appearance: none; min-height: 40px; padding: 0 13px; border: 0; border-radius: 6px; color: #6f8073; background: transparent; font-size: 12px; cursor: pointer; }
 .model-filter:hover { color: #315c44; }
@@ -180,6 +187,8 @@ footer { display: flex; align-items: center; gap: 18px; margin-top: 53px; min-he
   .model-axis-title { font-size: 15px; }
   .model-chart-foot { flex-wrap: wrap; font-size: 10px; }
   .model-ranking-heading { align-items: start; flex-direction: column; }
+  .model-intelligence-filter > label { flex-basis: 100%; }
+  .model-intelligence-filter input { flex: 1; width: 0; min-width: 70px; }
   .model-filters { width: 100%; }
   .model-filter { min-width: 0; flex: 1; padding: 0 8px; font-size: 11px; white-space: nowrap; }
   .model-table-wrap { display: none; }
