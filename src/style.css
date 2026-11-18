@@ -98,6 +98,8 @@ footer { display: flex; align-items: center; gap: 18px; margin-top: 53px; min-he
 .model-series-line { fill: none; stroke-width: 1.5; opacity: .68; vector-effect: non-scaling-stroke; pointer-events: none; }
 .model-series-line.anthropic { stroke: #648d70; }
 .model-series-line.openai { stroke: #df956a; }
+.model-frontier-line { fill: none; stroke: #46546e; stroke-width: 2; stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; pointer-events: none; }
+.model-legend .model-frontier-key { width: 19px; height: 0; border-top: 2px dashed #46546e; border-radius: 0; }
 .model-dot { stroke: #fff; stroke-width: 2; vector-effect: non-scaling-stroke; cursor: pointer; transition: r .15s,filter .15s; }
 .model-dot:hover,.model-dot:focus-visible { r: 7; outline: none; filter: drop-shadow(0 2px 3px #25382d40); }
 .model-chart-tooltip { position: absolute; z-index: 3; display: flex; width: min(252px,calc(100% - 16px)); flex-direction: column; gap: 7px; transform: translate(-50%,-100%); border: 1px solid #e2e8e2; border-radius: 8px; padding: 10px 12px; color: #758178; background: #fff; box-shadow: 0 5px 18px #20362d20; font-size: 11px; line-height: 1.4; pointer-events: none; }
