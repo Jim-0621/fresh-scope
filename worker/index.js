@@ -48,14 +48,26 @@ function mapCatalogRow(row) {
     intelligenceIndex: nullableNumber(raw?.intelligenceIndex),
     indexEstimated: raw?.intelligenceIndexIsEstimated === true,
     taskCostUsd: modelTaskCost(raw),
-    timePerTaskSeconds: nullableNumber(raw?.medianEndToEndResponseTimeSeconds),
-    outputTokensPerSecond: nullableNumber(raw?.medianOutputTokensPerSecond),
+    timePerTaskSeconds: nullableNumber(raw?.intelligenceIndexTimePerTask ?? raw?.medianEndToEndResponseTimeSeconds),
+    outputTokensPerSecond: nullableNumber(raw?.outputSpeed ?? raw?.medianOutputTokensPerSecond),
     raw,
   };
 }
 
 function modelEffort(name) {
   return String(name ?? "").match(/\b(xhigh|high|medium|low|max)\b/i)?.[1].toLowerCase() ?? null;
+}
+
+function leaderboardModelSlug(model) {
+  if (typeof model?.slug === "string") return model.slug.toLowerCase();
+  if (typeof model?.release?.slug !== "string") return "";
+
+  const releaseSlug = model.release.slug.toLowerCase();
+  const effort = model.suffix?.match(/^(xhigh|high|medium|low|max)(?:, Default Fallback)?$/i)?.[1].toLowerCase();
+  // Keep the identifiers used by older snapshots and saved chart selections.
+  // GPT-OSS used the bare slug for its high setting. Most families use max.
+  const defaultEffort = /^gpt-oss-(20b|120b)$/.test(releaseSlug) ? "high" : "max";
+  return effort && effort !== defaultEffort ? `${releaseSlug}-${effort}` : releaseSlug;
 }
 
 function isTextClientModel(namespace, slug, name) {
@@ -144,9 +156,10 @@ function extractArtificialAnalysisModels(html) {
   if (!chunks.length) throw new Error("Artificial Analysis 未返回可识别的排行榜数据。");
   const serialized = chunks.join("");
   const isLeaderboardModelArray = (rows) => rows.some((model) => {
-    if (!model || typeof model !== "object" || typeof model.slug !== "string") return false;
+    const slug = leaderboardModelSlug(model);
+    if (!slug) return false;
     const creator = String(model.modelCreatorName ?? model.creatorName ?? model.creator?.name ?? model.provider?.name ?? model.provider ?? "").toLowerCase();
-    return "intelligenceIndex" in model && (creator.includes("anthropic") || creator.includes("openai") || /^(?:claude|gpt)-/i.test(model.slug));
+    return "intelligenceIndex" in model && (creator.includes("anthropic") || creator.includes("openai") || /^(?:claude|gpt)-/.test(slug));
   });
   const sourceModels = findEmbeddedJsonArray(serialized, "initialModels", isLeaderboardModelArray)
     ?? findEmbeddedJsonArray(serialized, "models", isLeaderboardModelArray);
@@ -159,7 +172,8 @@ function extractArtificialAnalysisModels(html) {
   const releaseSlugByModelSlug = new Map((modelIdentities ?? []).map((model) => [model.slug, model.releaseSlug]));
   const releaseDateBySlug = new Map((releases ?? []).map((release) => [release.slug, release.releaseDate ?? release.date]));
   return sourceModels.flatMap((model) => {
-    const slug = String(model.slug ?? "").toLowerCase();
+    const slug = leaderboardModelSlug(model);
+    if (!slug || model.isReasoning === false) return [];
     const creator = String(model.modelCreatorName ?? model.creatorName ?? model.creator?.name ?? model.provider?.name ?? model.provider ?? "").toLowerCase();
     const provider = creator.includes("anthropic") || /^claude-/i.test(slug)
       ? "Anthropic"
@@ -168,7 +182,7 @@ function extractArtificialAnalysisModels(html) {
     const name = cleanModelName(model.shortName ?? model.name ?? slug);
     if (!provider || !namespace || !slug || !isTextClientModel(namespace, slug, name)) return [];
 
-    const releaseSlug = releaseSlugByModelSlug.get(slug) ?? slug;
+    const releaseSlug = model.release?.slug ?? releaseSlugByModelSlug.get(slug) ?? slug;
     return [{
       id: `${namespace}/${slug}`,
       name,
@@ -182,8 +196,6 @@ function extractArtificialAnalysisModels(html) {
       intelligenceIndex: nullableNumber(model.intelligenceIndex),
       indexEstimated: model.intelligenceIndexIsEstimated === true,
       taskCostUsd: modelTaskCost(model),
-      timePerTaskSeconds: nullableNumber(model.medianEndToEndResponseTimeSeconds),
-      outputTokensPerSecond: nullableNumber(model.medianOutputTokensPerSecond),
       raw: model,
     }];
   });
@@ -195,7 +207,7 @@ function baselineFromCatalog(catalog) {
     sourceUrl: MODEL_CATALOG_URL,
     retrievedAt: catalog.retrievedAt,
     models: catalog.models.map((model) => ({
-      slug: String(model.raw?.slug ?? model.id.split("/").at(-1) ?? model.id),
+      slug: model.id.split("/").at(-1),
       name: model.name,
       provider: model.provider,
       releaseDate: model.createdAt,
@@ -269,6 +281,9 @@ async function fetchModelCatalog() {
 
   if (!["Anthropic", "OpenAI"].every((provider) => models.some((model) => model.provider === provider))) {
     throw new Error("Artificial Analysis 排行榜未同时返回 Anthropic 和 OpenAI 模型，本次未更新快照。");
+  }
+  if (new Set(models.map((model) => model.id)).size !== models.length) {
+    throw new Error("Artificial Analysis 排行榜包含无法区分的模型档位，本次未更新快照。");
   }
   return { source: MODEL_CATALOG_SOURCE, retrievedAt: new Date().toISOString(), models };
 }
